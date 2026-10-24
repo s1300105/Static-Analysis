@@ -485,6 +485,8 @@ design.md §6.6 の規約を実装規則として固定する。
 4. **PR-4 取り込みと層（最小）**: `loadArtifact`、`unpackBundle`（webpack 5 production 1 種）、`importSourcemap`、unpacked 往復テスト。
 5. **PR-5 CLI 骨格**: `sa target` / `sa load`、`openContext`/`closeContext`、設定読み込み。
 6. **PR-6 実行イメージ**: `docker/`（jsluice・CodeQL・Semgrep の版固定、egress 制限）と D4 の確認。
+   → D4 は既定案で決定。LLM を使わない解析は `docker run --network none`、LLM を使うときは内部ネットワーク（`internal: true`）＋
+   `api.anthropic.com:443` だけを通す squid（`docker/compose.yaml`）。確認は `docker/verify.sh`（CI: `.github/workflows/docker.yml`）。
 
 並行して `@sa/eval` 側で M0（E1 採点基盤）を進められる（計画書 §3 の依存関係）。
 以降は計画書のマイルストーン（M2 以降）に従い、本文書の §5 のシグネチャを実装していく。

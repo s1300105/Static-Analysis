@@ -1,0 +1,41 @@
+name: Docker
+
+# 実行イメージ（docker/）を作り、版・オフラインでの動作・外向き通信の制限を確かめる（docs/plan.md D4）。
+# 重い（CodeQL バンドルが約 700MB）ので、イメージの中身に関わる変更のときと手動のときだけ回す。
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'docker/**'
+      - '.dockerignore'
+      - '.github/workflows/docker.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'packages/*/package.json'
+      - 'packages/*/tsup.config.ts'
+  pull_request:
+    paths:
+      - 'docker/**'
+      - '.dockerignore'
+      - '.github/workflows/docker.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'packages/*/package.json'
+      - 'packages/*/tsup.config.ts'
+  workflow_dispatch:
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Build images
+        run: docker compose -f docker/compose.yaml build
+      - name: Verify (versions, offline tools, egress restriction)
+        run: docker/verify.sh
+      - name: Image sizes
+        if: always()
+        run: docker image ls --filter reference='sa*'

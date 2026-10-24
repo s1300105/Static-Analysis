@@ -12,7 +12,7 @@
 | D1 | CodeQL のライセンスの適用範囲の確認結果 | M4 の前 | 確認が取れるまでは OSS コーパスだけで M4 を進め、実ターゲットには掛けない |
 | D2 | 評価に使う実ターゲット 2〜3 件（HAR とバンドル 2 版ずつ） | M0 | プログラム規約でソース解析と LLM 送信が許される対象から選ぶ |
 | D3 | 実ターゲットごとの `llm_code_policy`（deny / no_original / allow） | M2 | 未設定は deny |
-| D4 | 実行環境（コンテナ＋egress プロキシ / sandbox-runtime） | M1 | Docker＋`--network none`＋LLM API だけを通すプロキシ |
+| D4 | 実行環境（コンテナ＋egress プロキシ / sandbox-runtime） | M1 | Docker＋`--network none`＋LLM API だけを通すプロキシ（**既定案で決定**。`docker/README.md`） |
 | D5 | 段ごとの合格・撤退条件の初期値（§12 の数値）をそのまま使うか | M2 の終わり | そのまま使い、§13 で調整 |
 
 ---
