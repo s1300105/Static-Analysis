@@ -26,7 +26,7 @@ Bug Bounty 向けの静的解析 AI エージェント＋MCP サーバ。**タ�
 
 ```bash
 pnpm install
-pnpm check      # lint + typecheck + test + build + depcruise
+pnpm check      # lint + typecheck + test + build + smoke + depcruise
 ```
 
 個別:
@@ -36,5 +36,8 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm smoke      # ビルド後の dist で取り込み → unpack → sourcemap を一通り動かす（worker の dist 解決の確認）
 pnpm depcruise
 ```
+
+テストは worker（`packages/core/src/jobs/workers/*.worker.ts`）を Node の型除去で直接読むので、Node 22.18 以降が要る。

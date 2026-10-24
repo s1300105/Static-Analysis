@@ -39,7 +39,7 @@ module.exports = {
     doNotFollow: { path: 'node_modules' },
     tsConfig: { fileName: 'tsconfig.json' },
     tsPreCompilationDeps: true,
-    exclude: { path: '(^|/)(dist|node_modules)/|\\.test\\.ts$' },
+    exclude: { path: '(^|/)(dist|node_modules)/|\\.test\\.ts$|/test/fixtures/' },
     enhancedResolveOptions: {
       extensions: ['.ts', '.js', '.json'],
     },

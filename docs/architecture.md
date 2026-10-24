@@ -94,7 +94,8 @@
 
 ```
 packages/core/src/
-├─ context.ts        SaContext の生成（DB 接続・設定・store・jobRunner・logger を束ねる）
+├─ context.ts        SaContext / SaConfig の型と既定値（生成の openContext は PR-5）
+├─ validate.ts       入口の値を @sa/types の zod スキーマで検証して SaError('INVALID_INPUT') にそろえる
 ├─ errors.ts         SaError 階層（コード付き。握りつぶさない）
 ├─ ids.ts            ulid() ラッパ、nowIso()
 ├─ db/
@@ -111,7 +112,7 @@ packages/core/src/
 ├─ jobs/
 │  ├─ runner.ts      JobRunner: runWorker() / runChild()（上限・タイムアウト）
 │  ├─ skips.ts       SkipLog（理由別のスキップ記録 → analysis_run.skipped_detail）
-│  └─ workers/       babel.worker.ts など（worker_threads のエントリ）
+│  └─ workers/       unpack.worker.ts / sourcemap.worker.ts（worker_threads のエントリ。index.ts が src/dist の置き場所を解決）
 ├─ policy/
 │  ├─ paths.ts       generateWorkPath() / generateOriginalSourcePath() / assertWithinWorkspace() / writeWorkFile()（原則8）
 │  ├─ llm.ts         enforceLlmCodePolicy()（コード本文を返す出口で検査）
@@ -280,9 +281,12 @@ design.md §7 のツール表を、sa-core の関数シグネチャに落とす�
 ### 5.1 Artifact（`artifact/`）
 
 ```ts
-loadArtifact(ctx, { paths, targetId, versionId?, baseVersionId? }): { versionId: string; fileIds: string[] };  // ×  手順1
-importSourcemap(ctx, { versionId, mapFileId }): { originalFileIds: string[]; mapCheck: MapCheck };             // ×  手順1
-unpackBundle(ctx, { versionId }): { bundler: Bundler; moduleCount: number; unmappedCount: number };            // ×  手順1
+loadArtifact(ctx, { targetId, files: LoadArtifactFile[], versionId?, baseVersionId?, label?, collectedAt?, collectionNotes? })
+  : { versionId; createdVersion; fileIds; added };                                                              // ×  手順1
+importSourcemap(ctx, { versionId, mapFileId, generatedFileId? })
+  : Promise<{ runId?; generatedFileId; mapCheck: MapCheck | null; accepted; originalFileIds }>;                  // ×  手順1
+unpackBundle(ctx, { versionId, retryFailed? })
+  : Promise<{ runId; files; moduleCount; bundlers: Record<Bundler, number>; noBoundaryCount; skipped }>;        // ×  手順1
 pretty(ctx, { fileId }): { prettyFileId: string; positionMapHash: string };                                    // ×  手順3
 relinkBundle(ctx, { versionId }): { relinkedFileIds: string[]; unresolvedRequire: number };                    // ×  手順4
 indexFunctions(ctx, { versionId }): { functionCount: number; lineage: LineageStats };                          // ×  手順5/6
@@ -291,6 +295,19 @@ importHar(ctx, { targetId, versionId, harPath }): HarIngestSummary;             
 ```
 
 `importHar` は HAR を保存せず、許可リスト項目だけ抽出する（design.md §7.1）。完了条件に「HAR を保存しないこと/値を残さないことのテスト」を含める（計画書 M2）。
+
+手順1 の実装上の取り決め（PR-4）:
+- `loadArtifact` はファイルごとに配信 URL・読み込み元オリジン・帰属・チャンクキーを受ける（`LoadArtifactFile`。zod スキーマは `@sa/types`）。
+  版の中で同じ中身は 1 行にまとめて観測を足し合わせる。HAR（拡張子か `{"log":` で始まる中身）は拒否する。パースはしない。
+- `unpackBundle` は webpack 5 の production 出力（チャンクの `webpackChunk*.push` とランタイムのモジュールマップ）を認識し、
+  ファクトリ本体を raw の部分範囲として切り出す。モジュール ID は unpacked の `orig_name`、push のチャンク ID は raw の `chunk_key`（未設定なら）に入れる。
+  認識できない形式と ESM はファイル全体を 1 つの unpacked にし、認識できなかったものは `no_module_boundary` として記録する。
+  Babel の位置（UTF-16）はバイト位置に変換してから返す（BOM も 1 文字として残す）。まだ unpack していない raw だけを処理するので、版にファイルを足したら掛け直せばよい。
+- `importSourcemap` の簡易検証は、生成側を「識別子の先頭か」で近似し、元側は「その位置か同じ行のそれ以降に names[i] が識別子として現れるか」で数える
+  （webpack の map は元側の位置を文の先頭に丸めるため）。閾値の既定は 0.7（fixture で正しい map 0.83〜1.0、別ビルド・別チャンク 0.01〜0.25。design.md §13 で決め直す）。
+  生成元は sourceMappingURL、次に `<name>.map` ↔ `<name>` で探し、決まらなければ `generatedFileId` を求める。
+- worker のモジュール（`jobs/workers/*.worker.ts`）は相対 import をせず（型だけは可）、消せる型構文だけを使う。
+  テストでは Node の型除去でソースを、ビルド後は `dist/workers/<name>.js` を読む。後者は CI の `pnpm smoke` で確かめる。
 
 ### 5.2 Code intel（`intel/`）
 

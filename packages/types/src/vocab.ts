@@ -145,5 +145,19 @@ export const SKIP_REASONS = [
   'minified_excluded', // ツールが minified と見なして除外したもの
   'path_excluded', // パスの規則で除外したもの（node_modules 既定除外、正規化できない sources 名など）
   'unmapped', // raw へ正確に戻せなかった位置
+  'no_module_boundary', // unpack_bundle がモジュール境界を検出できなかったファイル（ファイル全体を 1 つの unpacked にした）
+  'no_source_content', // sourcemap の sources に sourcesContent が無く original 層を作れなかったもの
 ] as const;
 export type SkipReason = (typeof SKIP_REASONS)[number];
+
+// --- 成果物の帰属（artifact_file.ownership。design.md §6.1。推定値で、人間が上書きできる） ---
+export const OWNERSHIPS = ['first_party', 'vendored_lib', 'third_party_service', 'unknown'] as const;
+export type Ownership = (typeof OWNERSHIPS)[number];
+
+// --- パースの結果（artifact_file.parse_status。design.md §6.1。失敗時は raw 層だけ残す） ---
+export const PARSE_STATUSES = ['ok', 'parse_failed', 'timeout'] as const;
+export type ParseStatus = (typeof PARSE_STATUSES)[number];
+
+// --- sa-core を呼ぶ入口（権限と公開範囲の判定に使う。docs/architecture.md §3.2） ---
+export const CALLER_KINDS = ['cli', 'mcp', 'orchestrator'] as const;
+export type CallerKind = (typeof CALLER_KINDS)[number];

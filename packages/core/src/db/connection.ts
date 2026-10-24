@@ -77,6 +77,15 @@ export function withTxn<T>(ctx: HasDb, fn: () => T): T {
   }
 }
 
+/** fn を実行し、SQLite のエラーだけを SaError('DB_ERROR') に包んで投げ直す（リポジトリ関数の共通の形） */
+export function dbCall<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    throw toDbError(err);
+  }
+}
+
 /** better-sqlite3 のエラーを SaError('DB_ERROR') に包む。それ以外（SaError やバグ由来の例外）はそのまま返す */
 export function toDbError(err: unknown): unknown {
   if (err instanceof BetterSqlite3.SqliteError) {

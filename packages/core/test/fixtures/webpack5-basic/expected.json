@@ -1,0 +1,30 @@
+{
+  "webpack": "5.102.1",
+  "chunks": {
+    "lazy.ce3f5b37.js": {
+      "chunkIds": [
+        "245"
+      ],
+      "modules": [
+        "480"
+      ]
+    },
+    "main.037dca38.js": {
+      "chunkIds": [
+        "792"
+      ],
+      "modules": [
+        "748",
+        "853"
+      ]
+    },
+    "949.d486fd40.js": {
+      "chunkIds": [
+        "949"
+      ],
+      "modules": [
+        "949"
+      ]
+    }
+  }
+}

@@ -1,8 +1,18 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach } from 'vitest';
-import { type Database, type OpenDatabaseOptions, openDatabase } from '@sa/core';
+import {
+  DEFAULT_CONFIG,
+  type Database,
+  type OpenDatabaseOptions,
+  type SaConfig,
+  type SaContext,
+  migrate,
+  openBlobStore,
+  openDatabase,
+} from '@sa/core';
+import { createJobRunner } from '../src/jobs/runner';
 
 /** テストごとの一時ディレクトリ。afterEach で消す */
 export function useTmpDir(): () => string {
@@ -38,4 +48,24 @@ export function catchError(fn: () => unknown): unknown {
     return err;
   }
   throw new Error('expected an error');
+}
+
+/** 一時ディレクトリに DB（移行済み）・blob ストア・作業ディレクトリを持つ SaContext を作る。afterEach で閉じて消す */
+export function useContext(): (config?: Partial<SaConfig>) => SaContext {
+  const tmp = useTmpDir();
+  const openDb = useDatabases();
+  return (config = {}) => {
+    const dir = tmp();
+    const db = openDb(join(dir, 'sa.db'));
+    migrate(db);
+    const workspaceDir = join(dir, 'workspace');
+    mkdirSync(workspaceDir);
+    return {
+      db,
+      store: openBlobStore(join(dir, 'blobs')),
+      jobs: createJobRunner({ maxWorkers: 2 }),
+      config: { ...DEFAULT_CONFIG, workspaceDir, ...config },
+      caller: 'cli',
+    };
+  };
 }

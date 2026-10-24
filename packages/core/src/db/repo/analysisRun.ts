@@ -5,7 +5,7 @@
 import { LAYERS, RUN_KINDS, type Layer, type RunKind, type SkippedDetail } from '@sa/types';
 import { SaError } from '../../errors';
 import { newId, nowIso } from '../../ids';
-import { type HasDb, toDbError } from '../connection';
+import { type HasDb, dbCall } from '../connection';
 
 export interface NewAnalysisRun {
   /** 版に属さない実行（取り込み前の ingest など）は省く */
@@ -84,7 +84,7 @@ export function startAnalysisRun(ctx: HasDb, run: NewAnalysisRun): string {
   if (run.tool.trim() === '') throw new SaError('INVALID_INPUT', 'analysis_run.tool must not be empty');
 
   const id = newId();
-  try {
+  dbCall(() =>
     ctx.db
       .prepare(
         `INSERT INTO analysis_run
@@ -102,10 +102,8 @@ export function startAnalysisRun(ctx: HasDb, run: NewAnalysisRun): string {
         run.modelId ?? null,
         run.promptVersion ?? null,
         nowIso(),
-      );
-  } catch (err) {
-    throw toDbError(err);
-  }
+      ),
+  );
   return id;
 }
 
@@ -117,29 +115,27 @@ export function finishAnalysisRun(ctx: HasDb, runId: string, f: FinishAnalysisRu
       throw new SaError('INVALID_INPUT', `${k} must be a non-negative number: ${String(v)}`);
     }
   }
-  let changes: number;
-  try {
-    changes = ctx.db
-      .prepare(
-        `UPDATE analysis_run SET
-           files_total = ?, files_analyzed = ?, files_skipped = ?, skipped_detail = ?,
-           tokens_in = ?, tokens_out = ?, cost_usd = ?, finished_at = ?
-         WHERE id = ? AND finished_at IS NULL`,
-      )
-      .run(
-        f.filesTotal ?? null,
-        f.filesAnalyzed ?? null,
-        f.filesSkipped ?? null,
-        f.skippedDetail === undefined ? null : JSON.stringify(f.skippedDetail),
-        f.tokensIn ?? null,
-        f.tokensOut ?? null,
-        f.costUsd ?? null,
-        nowIso(),
-        runId,
-      ).changes;
-  } catch (err) {
-    throw toDbError(err);
-  }
+  const changes = dbCall(
+    () =>
+      ctx.db
+        .prepare(
+          `UPDATE analysis_run SET
+             files_total = ?, files_analyzed = ?, files_skipped = ?, skipped_detail = ?,
+             tokens_in = ?, tokens_out = ?, cost_usd = ?, finished_at = ?
+           WHERE id = ? AND finished_at IS NULL`,
+        )
+        .run(
+          f.filesTotal ?? null,
+          f.filesAnalyzed ?? null,
+          f.filesSkipped ?? null,
+          f.skippedDetail === undefined ? null : JSON.stringify(f.skippedDetail),
+          f.tokensIn ?? null,
+          f.tokensOut ?? null,
+          f.costUsd ?? null,
+          nowIso(),
+          runId,
+        ).changes,
+  );
   if (changes === 0) {
     if (getAnalysisRun(ctx, runId)) throw new SaError('INVALID_INPUT', `analysis_run already finished: ${runId}`, { runId });
     throw new SaError('NOT_FOUND', `analysis_run not found: ${runId}`, { runId });
@@ -147,12 +143,7 @@ export function finishAnalysisRun(ctx: HasDb, runId: string, f: FinishAnalysisRu
 }
 
 export function getAnalysisRun(ctx: HasDb, runId: string): AnalysisRun | undefined {
-  let row: AnalysisRunDbRow | undefined;
-  try {
-    row = ctx.db.prepare('SELECT * FROM analysis_run WHERE id = ?').get(runId) as AnalysisRunDbRow | undefined;
-  } catch (err) {
-    throw toDbError(err);
-  }
+  const row = dbCall(() => ctx.db.prepare('SELECT * FROM analysis_run WHERE id = ?').get(runId) as AnalysisRunDbRow | undefined);
   if (!row) return undefined;
   return {
     id: row.id,

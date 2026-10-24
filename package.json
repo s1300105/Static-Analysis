@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "depcruise": "depcruise packages --config .dependency-cruiser.cjs",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm depcruise"
+    "smoke": "node packages/core/scripts/smoke-dist.mjs",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm smoke && pnpm depcruise"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["better-sqlite3", "esbuild"]

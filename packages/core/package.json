@@ -13,14 +13,17 @@
   },
   "files": ["dist"],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean --loader .sql=text"
+    "build": "tsup"
   },
   "dependencies": {
+    "@babel/parser": "^8.0.8",
+    "@jridgewell/sourcemap-codec": "^1.6.0",
     "@sa/types": "workspace:*",
     "better-sqlite3": "^12.11.1",
     "ulid": "^3.0.2"
   },
   "devDependencies": {
+    "@babel/types": "^8.0.8",
     "@types/better-sqlite3": "^9.6.0"
   }
 }
