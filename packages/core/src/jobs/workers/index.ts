@@ -4,7 +4,7 @@
  * worker のモジュール（*.worker.ts）は、ビルド後は dist/workers/<name>.js（tsup.config.ts のエントリ）、
  * ソースのまま（テスト）は Node の型除去でそのまま読む（Node 22.18 以降の既定）。
  * どちらでも読めるように、worker のモジュールは次を守る:
- * - 相対 import は同じ階層の worker 用モジュール（./shared.ts など）だけ、拡張子付きで書く。型除去は拡張子無しの相対 import を
+ * - 相対 import は同じ階層の worker 用モジュール（./shared.ts・./bindings.ts など）だけ、拡張子付きで書く。型除去は拡張子無しの相対 import を
  *   解決できない。sa-core の他のモジュール（../../errors など）は import しない（worker のバンドルに sa-core 全体が入るのを避ける）
  * - 消せる型構文だけを使う（enum・namespace・引数プロパティを使わない。tsconfig の erasableSyntaxOnly で検査）
  * - スキップ理由を付けて失敗させるときは skipReason プロパティを持つ Error を投げる（JobSkipError と同じ形）

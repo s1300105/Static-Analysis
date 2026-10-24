@@ -1,6 +1,8 @@
 /**
- * ast_url 抽出器（design.md §7.3 extract_endpoints の 2）。unpacked のモジュール（無ければファイル全体）を Babel でパースし、
+ * ast_url 抽出器（design.md §7.3 extract_endpoints の 2）。raw の JS をファイルごと Babel でパースし、
  * HTTP クライアントの呼び出しから URL・メソッド・パラメータ名を拾う。データフローは使わない。
+ * unpack が切り出したモジュールの範囲は「範囲」として受け取り、ベース URL と変数の値は範囲ごとに扱う（./bindings.ts）。
+ * ファイルごと読むのは、webpack のランタイムに埋め込まれたエントリ（モジュールマップの外）も読むため。
  * worker 側の規約は ./index.ts を参照。
  *
  * 拾う呼び出し:
@@ -9,20 +11,23 @@
  * - 設定オブジェクト: f({ url, method|type, params, data, headers }) / x.ajax(...) / x.request(...)（axios(config)・$.ajax）、
  *   $.ajax(url, settings)
  * - xhr.open(method, url)、navigator.sendBeacon(url)、new WebSocket(url)、new EventSource(url)
- * URL は文字列・テンプレートリテラル・"+" の連結・"...".concat(...)・同じモジュールで一度だけ文字列を入れる変数から組み立てる。
+ * URL は文字列・テンプレートリテラル・"+" の連結・"...".concat(...)・同じ範囲で値が 1 つに決まる文字列の変数から組み立てる。
  * 可変部分は {name}（名前が 3 文字以上なら）か {}（minify された短い名前・複雑な式）にする。
  *
- * ベース URL（同じモジュールの単純な場合だけ）: `baseURL: "..."` の文字列か、`fetch("/api/v2" + path)` のように
+ * ベース URL（同じ範囲の単純な場合だけ）: `baseURL: "..."` の文字列か、`fetch("/api/v2" + path)` のように
  * 「"/" で終わらない文字列の直後に式が続く」URL（クライアントの送信部）を候補にし、候補が 1 つだけなら
  * メソッド名の呼び出し（api.get("/x") など）の相対 URL の前に付ける。後者の送信部自体はエンドポイントとして返さない。
  */
 import { parse, parseExpression } from '@babel/parser';
 import type { Expression, Node, ObjectExpression } from '@babel/types';
+import { Bindings, type ByteRange, Scopes } from './bindings.ts';
 import { skip, toByteOffsets, walk } from './shared.ts';
 
 export interface EndpointsInput {
-  /** unpacked のモジュール（UTF-8） */
+  /** raw の JS（UTF-8） */
   bytes: Uint8Array;
+  /** unpack が切り出したモジュールの範囲（raw のバイト位置）。無ければファイル全体が 1 つの範囲 */
+  modules?: ByteRange[];
 }
 
 export interface ExtractedParam {
@@ -39,15 +44,15 @@ export interface ExtractedCall {
   params: ExtractedParam[];
   /** どの形で拾ったか（fetch / method / config / xhr / beacon / websocket / eventsource） */
   via: string;
-  /** モジュール内の呼び出し式のバイト範囲 */
+  /** 呼び出し式の raw のバイト範囲 */
   startByte: number;
   endByte: number;
 }
 
 export interface EndpointsOutput {
   calls: ExtractedCall[];
-  /** モジュールのベース URL（推定できたときだけ） */
-  base: string | null;
+  /** 範囲ごとに推定できたベース URL（ソースの順） */
+  bases: string[];
 }
 
 type Part = { lit: string } | { expr: string | undefined };
@@ -71,7 +76,11 @@ interface Candidate extends Omit<ExtractedCall, 'url' | 'startByte' | 'endByte'>
   parts: Part[];
   start: number;
   end: number;
+  scope: number;
 }
+
+/** 範囲 scope の中で値が文字列に決まる変数を引く */
+type Constants = (name: string) => string | undefined;
 
 export default function extractEndpointCalls(input: EndpointsInput): EndpointsOutput {
   let text: string;
@@ -81,27 +90,40 @@ export default function extractEndpointCalls(input: EndpointsInput): EndpointsOu
     throw skip('parse_failed', 'not valid UTF-8');
   }
   const root = parseModule(text);
-  const constants = moduleStringConstants(root);
-  const bases = new Set<string>();
+  const scopes = new Scopes(input.bytes, input.modules ?? []);
+  const bindings = new Bindings(root, scopes);
+  const constantsOf = (scope: number): Constants => (name) => literalString(bindings.get(scope, name));
+  // 範囲ごとのベース URL の候補（最初に見つけた位置も持って、出力をソースの順にする）
+  const baseCandidates = new Map<number, { values: Set<string>; at: number }>();
+  const addBase = (scope: number, value: string, at: number): void => {
+    const b = baseCandidates.get(scope) ?? { values: new Set<string>(), at };
+    b.values.add(value);
+    b.at = Math.min(b.at, at);
+    baseCandidates.set(scope, b);
+  };
   const candidates: Candidate[] = [];
 
   walk(root, (n) => {
     if (n.type === 'ObjectProperty' && !n.computed && BASE_KEYS.has(keyName(n.key) ?? '')) {
-      const v = literalUrl(n.value as Expression, constants);
-      if (v !== undefined) bases.add(v);
+      const scope = scopes.of(n.start!);
+      const v = literalUrl(n.value as Expression, constantsOf(scope));
+      if (v !== undefined) addBase(scope, v, n.start!);
     }
     if (n.type !== 'CallExpression' && n.type !== 'NewExpression' && n.type !== 'OptionalCallExpression') return;
-    const c = recognize(n, constants);
+    const scope = scopes.of(n.start!);
+    const c = recognize(n, constantsOf(scope), scope);
     if (!c) return;
     const base = basePrefix(c.parts);
     if (base !== undefined && c.via !== 'method') {
-      bases.add(base);
+      addBase(scope, base, n.start!);
       return;
     }
     candidates.push(c);
   });
 
-  const base = bases.size === 1 ? [...bases][0]! : null;
+  // 候補が 1 つだけの範囲のベース URL
+  const bases = new Map<number, { value: string; at: number }>();
+  for (const [scope, b] of baseCandidates) if (b.values.size === 1) bases.set(scope, { value: [...b.values][0]!, at: b.at });
   // walk は順不同なので、ソースの順に並べる（出力を決定的にする）
   candidates.sort((a, b) => a.start - b.start || a.end - b.end);
   const offsets = toByteOffsets(text, candidates.flatMap((c) => [c.start, c.end]));
@@ -109,16 +131,17 @@ export default function extractEndpointCalls(input: EndpointsInput): EndpointsOu
   const seen = new Set<string>();
   for (const c of candidates) {
     let url = render(c.parts);
-    if (c.via === 'method' && base !== null && isPathRelative(url) && !url.startsWith(base)) {
+    const base = bases.get(c.scope)?.value;
+    if (c.via === 'method' && base !== undefined && isPathRelative(url) && !url.startsWith(base)) {
       url = `${base.replace(/\/+$/, '')}/${url.replace(/^\/+/, '')}`;
     }
     const key = `${c.start}:${c.method}:${url}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const { parts: _parts, start, end, ...rest } = c;
+    const { parts: _parts, start, end, scope: _scope, ...rest } = c;
     calls.push({ ...rest, url, startByte: offsets.get(start)!, endByte: offsets.get(end)! });
   }
-  return { calls, base };
+  return { calls, bases: [...bases.values()].sort((a, b) => a.at - b.at).map((b) => b.value) };
 }
 
 /**
@@ -138,13 +161,13 @@ function parseModule(text: string): Node {
 }
 
 /** 呼び出しの形を見て、URL・メソッド・パラメータを取り出す */
-function recognize(n: Node, constants: Map<string, string>): Candidate | undefined {
+function recognize(n: Node, constants: Constants, scope: number): Candidate | undefined {
   if (n.type !== 'CallExpression' && n.type !== 'NewExpression' && n.type !== 'OptionalCallExpression') return undefined;
   const args = n.arguments as Node[];
   const callee = n.callee as Node;
   const name = calleeName(callee);
   const prop = callee.type === 'MemberExpression' || callee.type === 'OptionalMemberExpression' ? memberName(callee) : undefined;
-  const at = { start: n.start!, end: n.end! };
+  const at = { start: n.start!, end: n.end!, scope };
 
   // new WebSocket(url) / new EventSource(url)
   if (n.type === 'NewExpression' && (name === 'WebSocket' || name === 'EventSource')) {
@@ -239,7 +262,7 @@ function bodyParams(n: Node): ExtractedParam[] {
 }
 
 /** URL の式を文字列と可変部分の並びにする。文字列の部分が 1 つも無ければ undefined */
-function urlParts(n: Node | undefined, constants: Map<string, string>): Part[] | undefined {
+function urlParts(n: Node | undefined, constants: Constants): Part[] | undefined {
   if (!n) return undefined;
   const parts: Part[] = [];
   const add = (x: Node): void => {
@@ -261,7 +284,7 @@ function urlParts(n: Node | undefined, constants: Map<string, string>): Part[] |
     ) {
       add(x.callee.object);
       for (const a of x.arguments) add(a as Node);
-    } else if (x.type === 'Identifier' && constants.has(x.name)) parts.push({ lit: constants.get(x.name)! });
+    } else if (x.type === 'Identifier' && constants(x.name) !== undefined) parts.push({ lit: constants(x.name)! });
     else parts.push({ expr: exprName(x) });
   };
   add(n);
@@ -287,30 +310,9 @@ function render(parts: Part[]): string {
   return parts.map((p) => ('lit' in p ? p.lit : p.expr !== undefined ? `{${p.expr}}` : '{}')).join('');
 }
 
-function literalUrl(n: Expression, constants: Map<string, string>): string | undefined {
+function literalUrl(n: Expression, constants: Constants): string | undefined {
   const parts = urlParts(n as Node, constants);
   return parts && parts.length === 1 && 'lit' in parts[0]! ? parts[0].lit : undefined;
-}
-
-/**
- * 同じモジュールで一度だけ宣言されて文字列で初期化され、代入し直されない変数（const API = "/api"）。
- * minify で const が var / let になることがあるので宣言の種類は問わず、代入・増減があれば使わない
- */
-function moduleStringConstants(program: Node): Map<string, string> {
-  const values = new Map<string, string | null>();
-  const reassigned = new Set<string>();
-  walk(program, (n) => {
-    if (n.type === 'AssignmentExpression' && n.left.type === 'Identifier') reassigned.add(n.left.name);
-    if (n.type === 'UpdateExpression' && n.argument.type === 'Identifier') reassigned.add(n.argument.name);
-    if (n.type !== 'VariableDeclarator' || n.id.type !== 'Identifier') return;
-    const name = n.id.name;
-    const v = literalString(n.init ?? undefined);
-    values.set(name, values.has(name) || v === undefined ? null : v);
-  });
-  for (const name of reassigned) values.delete(name);
-  const out = new Map<string, string>();
-  for (const [k, v] of values) if (v !== null) out.set(k, v);
-  return out;
 }
 
 function looksLikeUrl(url: string): boolean {
@@ -384,8 +386,8 @@ function hasAnyKey(o: ObjectExpression, keys: string[]): boolean {
  * method（$.ajax は type）の値。キーが無ければ undefined（呼び出し側の既定）、文字列で無ければ ''（不明）。
  * type は他の意味（"json" など）にも使われるので、HTTP のメソッド名のときだけ使う
  */
-function methodProp(o: ObjectExpression, constants: Map<string, string>): string | undefined {
-  const value = (n: Node): string | undefined => literalString(n) ?? (n.type === 'Identifier' ? constants.get(n.name) : undefined);
+function methodProp(o: ObjectExpression, constants: Constants): string | undefined {
+  const value = (n: Node): string | undefined => literalString(n) ?? (n.type === 'Identifier' ? constants(n.name) : undefined);
   const m = propValue(o, 'method');
   if (m) return value(m)?.toUpperCase() ?? '';
   const t = propValue(o, 'type');

@@ -47,6 +47,27 @@ export function toByteOffsets(text: string, indices: number[]): Map<number, numb
   return out;
 }
 
+/**
+ * UTF-8 のバイト位置を文字位置（UTF-16 のコード単位）に変える（toByteOffsets の逆）。全位置を 1 回の走査で求める。
+ * BOM も 1 文字に数える（デコードは ignoreBOM: true で BOM を残す）
+ */
+export function toCharOffsets(bytes: Uint8Array, offsets: number[]): Map<number, number> {
+  const targets = [...new Set(offsets)].sort((a, b) => a - b);
+  const out = new Map<number, number>();
+  let chars = 0;
+  let i = 0;
+  for (const target of targets) {
+    const end = Math.min(target, bytes.length);
+    for (; i < end; i++) {
+      const b = bytes[i]!;
+      // 続きのバイト（0x80〜0xbf）は数えない。4 バイトの文字（0xf0〜）は UTF-16 で 2 単位
+      if (b < 0x80 || b >= 0xc0) chars += b >= 0xf0 ? 2 : 1;
+    }
+    out.set(target, chars);
+  }
+  return out;
+}
+
 /** スキップ理由（JobSkipError と同じ skipReason）を持つ Error。worker の起動コードがこの理由で失敗を返す */
 export function skip(reason: string, message: string): Error {
   return Object.assign(new Error(message), { skipReason: reason });

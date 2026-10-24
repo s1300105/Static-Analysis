@@ -36,6 +36,7 @@ describe('BlobStore', () => {
     const data = new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xff, 0xfe, 0x00, 0x0d, 0x0a]);
     const { hash } = store.put(data);
     expect(new Uint8Array(store.get(hash))).toEqual(data);
+    expect(store.sizeOf(hash)).toBe(data.byteLength);
   });
 
   it('handles empty content', () => {
@@ -59,6 +60,7 @@ describe('BlobStore', () => {
     const store = openBlobStore(join(tmp(), 'blobs'));
     expect(store.has(EMPTY_SHA256)).toBe(false);
     expect((catchError(() => store.get(EMPTY_SHA256)) as SaError).code).toBe('NOT_FOUND');
+    expect((catchError(() => store.sizeOf(EMPTY_SHA256)) as SaError).code).toBe('NOT_FOUND');
   });
 
   it('rejects malformed hashes before touching the filesystem', () => {
@@ -67,6 +69,7 @@ describe('BlobStore', () => {
       expect((catchError(() => store.pathOf(bad)) as SaError).code).toBe('INVALID_INPUT');
       expect((catchError(() => store.get(bad)) as SaError).code).toBe('INVALID_INPUT');
       expect((catchError(() => store.has(bad)) as SaError).code).toBe('INVALID_INPUT');
+      expect((catchError(() => store.sizeOf(bad)) as SaError).code).toBe('INVALID_INPUT');
     }
   });
 });

@@ -58,15 +58,46 @@ describe('ast_url worker: HTTP client calls', () => {
     const r = extractEndpointCalls({
       bytes: Buffer.from('a.create({ baseURL: "/a" }); b.create({ baseURL: "/b" }); c.get("/x");'),
     });
-    expect(r.base).toBeNull();
+    expect(r.bases).toEqual([]);
     expect(r.calls.map((c) => c.url)).toEqual(['/x']);
+  });
+
+  it('keeps base URLs and variables inside the module ranges unpack found', () => {
+    // 2 つのモジュール（webpack のファクトリ）と、その外のエントリ。どれも短い名前 t を使い回す
+    const mod1 = 'e=>{const t="/v1";e.c=t;n.create({baseURL:"/one"}).get("/a")}';
+    const mod2 = 'e=>{const t="/v2";n.create({baseURL:"/two"}).get(t+"/b")}';
+    const code = `var m={1:${mod1},2:${mod2}};const t="/out";fetch(t+"/c");`;
+    const start1 = code.indexOf(mod1);
+    const start2 = code.indexOf(mod2);
+    const r = extractEndpointCalls({
+      bytes: Buffer.from(code),
+      modules: [
+        { start: start1, end: start1 + mod1.length },
+        { start: start2, end: start2 + mod2.length },
+      ],
+    });
+    expect(r.calls.map((c) => c.url)).toEqual(['/one/a', '/two/v2/b', '/out/c']);
+    expect(r.bases).toEqual(['/one', '/two']);
+    // 範囲を渡さなければファイル全体が 1 つ（ベース URL が 2 つになって付けない。t も 3 回宣言されるので決まらない）
+    expect(extractEndpointCalls({ bytes: Buffer.from(code) }).calls.map((c) => c.url)).toEqual(['/a', '{}/b', '{}/c']);
+  });
+
+  it('does not take a value for a name that is also a parameter, a loop variable or updated', () => {
+    expect(
+      brief(`
+        const API = "/api"; function f(API) { return fetch(API + "/x") }
+        var p; p = "/p"; fetch(p + "/y");
+        let q = "/q"; q += "/r"; fetch(q + "/z");
+        const s = "/s"; for (const s of xs) fetch(s + "/w");
+      `),
+    ).toEqual(['fetch GET {API}/x', 'fetch GET /p/y', 'fetch GET {}/z', 'fetch GET {}/w']);
   });
 
   it('takes the base from a transport that appends a path, and does not report the transport itself', () => {
     const r = extractEndpointCalls({
       bytes: Buffer.from('function req(p, o) { return fetch("/api/v2" + p, o) } client.get("/me"); client.patch("/me", { name });'),
     });
-    expect(r.base).toBe('/api/v2');
+    expect(r.bases).toEqual(['/api/v2']);
     expect(r.calls.map((c) => `${c.method} ${c.url}`)).toEqual(['GET /api/v2/me', 'PATCH /api/v2/me']);
   });
 

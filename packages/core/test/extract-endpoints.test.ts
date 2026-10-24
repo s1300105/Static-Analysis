@@ -5,7 +5,7 @@ import { type JobFailure, type SaContext, createTarget, extractEndpoints, listEn
 import type { LoadArtifactFile, TargetScopeInput } from '@sa/types';
 import { displayPositions } from '../src/artifact/position';
 import { getAnalysisRun } from '../src/db/repo/analysisRun';
-import { getArtifactFile } from '../src/db/repo/artifactFile';
+import { getArtifactFile, listArtifactFiles } from '../src/db/repo/artifactFile';
 import { ensureCodeLocation } from '../src/db/repo/codeLocation';
 import { upsertEndpoint, upsertSighting } from '../src/db/repo/endpoint';
 import { useContext, useTmpDir } from './helpers';
@@ -80,7 +80,7 @@ describe('extractEndpoints (ast_url)', () => {
     expect(byKey(asExpected(ctx, targetId))).toEqual(byKey(expected.endpoints));
 
     const run = getAnalysisRun(ctx, r.extractors.ast_url!.runId)!;
-    expect(run).toMatchObject({ tool: 'extract_endpoints/ast_url', kind: 'engine', inputLayer: 'unpacked', filesTotal: 1, filesSkipped: 0 });
+    expect(run).toMatchObject({ tool: 'extract_endpoints/ast_url', kind: 'engine', inputLayer: 'raw', filesTotal: 1, filesSkipped: 0 });
     expect(run.toolVersion).toContain('@babel/parser');
     expect(run.finishedAt).not.toBeNull();
   });
@@ -178,12 +178,26 @@ describe('extractEndpoints (ast_url)', () => {
       .map((f) => ({ path: join(basic, f) }));
     const { targetId, versionId } = await loadVersion(ctx, [...files, { path: broken }]);
     const r = await extractEndpoints(ctx, { versionId });
-    // webpack のファクトリ（関数式）も読める。この fixture に HTTP の呼び出しは無い
+    // raw の JS 3 つ（モジュールマップを持つ webpack の出力）と壊れたファイル。この fixture に HTTP の呼び出しは無い
     expect(r).toMatchObject({ endpoints: 0, extractors: { ast_url: { inputs: 4, found: 0, skipped: 1 } } });
     expect(listEndpoints(ctx, { targetId })).toEqual([]);
     const run = getAnalysisRun(ctx, r.extractors.ast_url!.runId)!;
-    expect(run).toMatchObject({ filesTotal: 5, filesAnalyzed: 4, filesSkipped: 1 });
+    expect(run).toMatchObject({ filesTotal: 4, filesAnalyzed: 3, filesSkipped: 1 });
     expect(run.skippedDetail?.parse_failed?.count).toBe(1);
+  });
+
+  it('reads the entry code webpack puts in the runtime, outside the module map', async () => {
+    const ctx = makeCtx();
+    const graphqlBundle = new URL('./fixtures/webpack5-graphql/output/main.d30a92cb.js', import.meta.url).pathname;
+    const { targetId, versionId } = await loadVersion(ctx, [{ path: graphqlBundle }]);
+    // モジュールマップにはモジュールが 1 つ（Relay の生成物）だけ。fetch はランタイムの中のエントリにある
+    const [module] = listArtifactFiles(ctx, { versionId, layer: 'unpacked' });
+    expect(module).toMatchObject({ origName: '979' });
+    const r = await extractEndpoints(ctx, { versionId });
+    expect(r.extractors.ast_url).toMatchObject({ found: 1, sightings: 1 });
+    expect(listEndpoints(ctx, { targetId })).toMatchObject([{ protocol: 'graphql', method: 'POST', pathNorm: '/graphql', operation: '' }]);
+    const [row] = sightingRows(ctx, versionId);
+    expect(row!.start_byte).toBeGreaterThan(module!.rawOffset! + ctx.store.sizeOf(module!.contentHash));
   });
 
   it('reads the whole raw file when unpack has not run', async () => {

@@ -113,7 +113,7 @@ packages/core/src/
 │  ├─ runner.ts      JobRunner: runWorker() / runChild()（上限・タイムアウト）
 │  ├─ skips.ts       SkipLog（理由別のスキップ記録 → analysis_run.skipped_detail）
 │  └─ workers/       unpack / sourcemap / endpoints の *.worker.ts（worker_threads のエントリ。index.ts が src/dist の置き場所を解決）
-│                    と shared.ts（worker 間で共有する AST の走査・位置の変換）
+│                    と shared.ts（AST の走査・位置の変換）・bindings.ts（範囲ごとの変数の値）
 ├─ policy/
 │  ├─ paths.ts       generateWorkPath() / generateOriginalSourcePath() / assertWithinWorkspace() / writeWorkFile()（原則8）
 │  ├─ llm.ts         enforceLlmCodePolicy()（コード本文を返す出口で検査）
@@ -316,7 +316,7 @@ importHar(ctx, { targetId, versionId, harPath }): HarIngestSummary;             
 - `importSourcemap` の簡易検証は、生成側を「識別子の先頭か」で近似し、元側は「その位置か同じ行のそれ以降に names[i] が識別子として現れるか」で数える
   （webpack の map は元側の位置を文の先頭に丸めるため）。閾値の既定は 0.7（fixture で正しい map 0.83〜1.0、別ビルド・別チャンク 0.01〜0.25。design.md §13 で決め直す）。
   生成元は sourceMappingURL、次に `<name>.map` ↔ `<name>` で探し、決まらなければ `generatedFileId` を求める。
-- worker のモジュール（`jobs/workers/*.worker.ts`）の相対 import は同じ階層の worker 用モジュール（`./shared.ts`）だけにして拡張子を付け
+- worker のモジュール（`jobs/workers/*.worker.ts`）の相対 import は同じ階層の worker 用モジュール（`./shared.ts` など）だけにして拡張子を付け
   （型だけの import は可。PR-8 で tsconfig に `allowImportingTsExtensions` を足した）、消せる型構文だけを使う。
   テストでは Node の型除去でソースを、ビルド後は `dist/workers/<name>.js`（tsup が shared.ts を取り込む）を読む。後者は CI の `pnpm smoke` で確かめる。
 
@@ -359,8 +359,10 @@ E1 の取り決め（PR-7・PR-8）:
   （SPA のルート定義・静的ファイルのパスを拾わないため）。method の無い fetch / 設定オブジェクトは GET、method が式なら不明（`''`）。
 - ベース URL は同じモジュールの中だけで推定する（`baseURL` 等の文字列、または `fetch("/api" + path)` のような送信部）。候補が 1 つのときだけ、
   メソッド名の呼び出しの相対 URL に付ける。送信部そのものはエンドポイントにしない。
-- 入力は unpacked のモジュール（webpack のファクトリは関数式なので、プログラムとして読めなければ式として読む）。unpack していない raw は
-  ファイル全体を読む。位置は呼び出し式の raw 基準のバイト範囲（`raw_offset` を足す）で `code_location` に置き、表示用の行・列も入れる。
+- ast_url は raw の JS をファイルごと読み、unpack が切り出したモジュールの範囲を「範囲」として渡す（ベース URL と変数の値は範囲ごと。
+  minify はモジュールごとに短い名前を使い回すため）。モジュールだけを読むと、webpack がランタイムの中に埋め込むエントリ
+  （モジュールマップの外）を落とす。変数の値は、その範囲で値の出所が 1 つだけで、引数・for-in/of・`+=`・`++` などの別の束縛が
+  無い名前だけ使う（`jobs/workers/bindings.ts`）。位置は呼び出し式の raw 基準のバイト範囲で `code_location` に置き、表示用の行・列も入れる。
 - 相対 URL の origin は raw の `loaded_by_origins`（http(s) のオリジン）で補う（design.md §6.2）。複数あればそれぞれの endpoint にし、
   無ければ `''`。相対の WebSocket は ws(s) にする。パスに固定の部分が無く origin も分からない URL は捨てる（`dropped`）。
 - jsluice（PR-9）は raw ファイルごとに子プロセスで掛ける（tree-sitter なので Babel が読めなかったファイルも読む）。出力の癖を直す:

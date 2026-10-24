@@ -15,6 +15,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeSync,
 } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -34,6 +35,8 @@ export interface BlobStore {
   /** 中身を読み、ハッシュが名前と一致するか検査してから返す */
   get(hash: string): Buffer;
   has(hash: string): boolean;
+  /** 中身を読まずに大きさ（バイト）を返す */
+  sizeOf(hash: string): number;
   pathOf(hash: string): string;
 }
 
@@ -102,5 +105,17 @@ export function openBlobStore(root: string): BlobStore {
 
   const has = (hash: string): boolean => existsSync(pathOf(hash));
 
-  return { root: absRoot, put, get, has, pathOf };
+  const sizeOf = (hash: string): number => {
+    const p = pathOf(hash);
+    try {
+      return statSync(p).size;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new SaError('NOT_FOUND', `blob not found: ${hash}`, { hash }, { cause: err });
+      }
+      throw new SaError('IO_ERROR', `failed to stat blob ${hash}`, { hash }, { cause: err });
+    }
+  };
+
+  return { root: absRoot, put, get, has, sizeOf, pathOf };
 }
