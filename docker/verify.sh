@@ -24,7 +24,9 @@ fail() {
 }
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
-  rm -rf "$WORK"
+  # コンテナの利用者（node）が 0700 で作ったファイルは、こちらの利用者では消せないことがあるのでコンテナから消す
+  docker run --rm --network none --user 0 -v "$WORK:/w" --entrypoint sh "$SA_IMAGE" -c 'rm -rf /w/* /w/.[!.]*' >/dev/null 2>&1 || true
+  rm -rf "$WORK" || true
 }
 trap cleanup EXIT
 

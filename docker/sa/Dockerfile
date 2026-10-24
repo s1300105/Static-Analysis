@@ -25,6 +25,7 @@ RUN --mount=type=secret,id=build_ca \
  && echo "${CODEQL_SHA256}  /tmp/codeql.tar.gz" | sha256sum -c - \
  && tar -xzf /tmp/codeql.tar.gz -C /opt \
  && rm /tmp/codeql.tar.gz \
+ && chmod -R a+rX /opt/codeql \
  && test "$(/opt/codeql/codeql version --format=terse)" = "${CODEQL_VERSION}"
 
 # ---- jsluice: Go のモジュール版で固定し、sum.golang.org で中身を検証する。go-tree-sitter を使うので cgo ----
@@ -65,6 +66,7 @@ ARG JSLUICE_VERSION=v0.0.0-20240110145140-0ddfab153e06
 # Semgrep の venv は Debian の python3 を指す。Semgrep のコア（OCaml）は通信しないときも起動時に CA の束を読むので
 # ca-certificates も入れる（コンテナはネットワークを持たないので、これで外へ出られるようにはならない）
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates && rm -rf /var/lib/apt/lists/*
+# 実行ユーザー（node）がコンパイル済みのクエリ（.qlx）を読めるように、codeql ステージで a+rX にしてある
 COPY --from=codeql /opt/codeql /opt/codeql
 COPY --from=jsluice /out/jsluice /usr/local/bin/jsluice
 COPY --from=semgrep /opt/semgrep /opt/semgrep
