@@ -19,7 +19,7 @@ import { type CliIo, collect, emit, withContext } from '../io';
 export function registerEndpointCommands(program: Command, io: CliIo): void {
   program
     .command('extract-endpoints')
-    .description('版の JS から API エンドポイントを抽出する（ast_url と、設定があれば jsluice）')
+    .description('版の JS から API エンドポイントを抽出する（ast_url・GraphQL と、設定があれば jsluice）')
     .argument('<target>', '対象の ID か名前')
     .option('--version-id <id>', '抽出する版（既定: 取得日時が最も新しい版）')
     .option('--extractor <name>', `掛ける抽出器（繰り返し指定。${CODE_EXTRACTORS.join(' / ')}。既定: 使えるものすべて）`, collect)
@@ -65,10 +65,13 @@ function extractSummary(r: ExtractEndpointsResult): string[] {
   return lines;
 }
 
+/** 1 行: メソッド（GraphQL は protocol と operation の種類）・送信先・operation 名・persisted query の id・パラメータ・スコープ */
 function endpointLine(e: EndpointListItem): string {
   const head = e.protocol === 'rest' ? (e.method || '?').padEnd(7) : `${e.protocol} ${e.method}`.trim().padEnd(7);
+  const target = `${e.origin}${e.pathTemplate ?? e.pathNorm}` || '?';
+  const operation = `${e.operation ? ` ${e.operation}` : ''}${e.persistedHash ? ` #${e.persistedHash.slice(0, 12)}` : ''}`;
   const params = e.params.map((p) => `${p.in}:${p.name}`).join(' ');
   const scope = e.inScope === null ? 'scope ?' : e.inScope ? 'in scope' : 'OUT OF SCOPE';
   const seen = `${e.sightings} sighting${e.sightings === 1 ? '' : 's'}${e.observedInHar ? ', seen in HAR' : ''}`;
-  return `${head} ${e.origin}${e.pathTemplate ?? e.pathNorm}${params ? `  [${params}]` : ''}  (${scope}; ${seen})`;
+  return `${head} ${target}${operation}${params ? `  [${params}]` : ''}  (${scope}; ${seen})`;
 }

@@ -18,6 +18,7 @@ function tmp(): string {
 const fixtures = new URL('../../core/test/fixtures/webpack5-basic/', import.meta.url).pathname;
 const output = join(fixtures, 'output');
 const endpointsBundle = new URL('../../core/test/fixtures/webpack5-endpoints/output/main.c452f02c.js', import.meta.url).pathname;
+const graphqlBundle = new URL('../../core/test/fixtures/webpack5-graphql/output/main.d30a92cb.js', import.meta.url).pathname;
 
 /** home を一時ディレクトリにして sa を実行する */
 function cli(home: string) {
@@ -232,6 +233,21 @@ describe('sa extract-endpoints / sa endpoints', () => {
     const noJsluice = await sa('extract-endpoints', 'example', '--extractor', 'jsluice');
     expect(noJsluice.code).toBe(2);
     expect(noJsluice.stderr).toContain('jsluice is not configured');
+  });
+
+  it('lists GraphQL operations with their kind, target and persisted query id', async () => {
+    const sa = cli(tmp());
+    await sa('target', 'add', 'example');
+    await sa('load', 'example', graphqlBundle, '--collected-at', 'now');
+    const r = await sa('extract-endpoints', 'example');
+    expect(r.stdout).toContain('  graphql: 1 inputs, 7 found, 0 dropped, 7 sightings, 0 skipped');
+    const lines = (await sa('endpoints', 'example')).stdout.trim().split('\n');
+    expect(lines).toHaveLength(8);
+    expect(lines).toContain('graphql POST /graphql  [header:Content-Type]  (scope ?; 1 sighting)');
+    expect(lines).toContain(
+      'graphql QUERY /graphql UserProfileQuery #7f3a9c2e1b4d  [graphql_var:userId graphql_var:withPosts]  (scope ?; 1 sighting)',
+    );
+    expect(lines).toContain('graphql MUTATION /graphql DeletePost  [graphql_var:id graphql_var:reason]  (scope ?; 1 sighting)');
   });
 
   it('runs jsluice when config.json points at it', async () => {

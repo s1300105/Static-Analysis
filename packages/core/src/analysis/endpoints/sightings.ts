@@ -18,14 +18,16 @@ import { normalizeEndpointUrl } from './normalize';
 
 /** 抽出器が見つけた呼び出し 1 つ（位置は raw 基準） */
 export interface EndpointCandidate {
-  /** normalizeEndpointUrl に渡す形（可変部分は {name}・{}・EXPR） */
+  /** normalizeEndpointUrl に渡す形（可変部分は {name}・{}・EXPR）。GraphQL の operation は送信先（分からなければ ''） */
   url: string;
-  /** 大文字。不明は '' */
+  /** 大文字。不明は ''。GraphQL の operation は種類（QUERY / MUTATION / SUBSCRIPTION） */
   method: string;
   websocket: boolean;
   params: EndpointParam[];
   startByte: number;
   endByte: number;
+  /** GraphQL の operation（protocol は graphql になる） */
+  operation?: { name: string; persistedHash: string | null };
 }
 
 /** raw ファイル 1 つ分の抽出結果 */
@@ -70,6 +72,8 @@ interface Sighting {
   method: string;
   pathNorm: string;
   pathTemplate: string;
+  operation: string;
+  persistedHash: string | null;
   params: EndpointParam[];
   startByte: number;
   endByte: number;
@@ -107,7 +111,8 @@ export function writeSightings(
           method: s.method,
           pathNorm: s.pathNorm,
           pathTemplate: s.pathTemplate,
-          operation: '',
+          operation: s.operation,
+          ...(s.persistedHash !== null && { persistedHash: s.persistedHash }),
         });
         upsertSighting(ctx, { endpointId, versionId: w.versionId, locationId, params: s.params, extractedBy: w.extractor, runId: w.runId });
         out.endpointIds.add(endpointId);
@@ -129,28 +134,38 @@ function pageOrigins(raw: ArtifactFile): string[] {
 }
 
 function toSightings(c: EndpointCandidate, pageOrigins: string[]): Sighting[] {
+  const at = { startByte: c.startByte, endByte: c.endByte };
+  // 送信先の分からない GraphQL の operation（origin もパスも ''）
+  if (c.operation && c.url === '') {
+    const { name: operation, persistedHash } = c.operation;
+    return [{ protocol: 'graphql', origin: '', method: c.method, pathNorm: '', pathTemplate: '', operation, persistedHash, params: c.params, ...at }];
+  }
   const n = normalizeEndpointUrl(c.url);
   if (!n) return [];
   // パスに固定の部分が 1 つも無く、origin も分からないものは手掛かりにならない（fetch(base + "/") など）
   if (n.origin === '' && !n.pathNorm.split('/').some((seg) => seg !== '' && seg !== '{}')) return [];
 
   const websocket = c.websocket || n.scheme === 'ws' || n.scheme === 'wss';
-  const protocol: Protocol = websocket ? 'websocket' : GRAPHQL_PATH_RE.test(n.pathNorm) ? 'graphql' : 'rest';
-  const params = uniqueParams([
-    ...n.pathParams.map((name) => ({ name, in: 'path' as const })),
-    ...n.queryParams.map((name) => ({ name, in: 'query' as const })),
-    ...c.params.filter((p) => !(protocol === 'graphql' && p.in === 'body' && GRAPHQL_ENVELOPE.has(p.name))),
-  ]);
+  const protocol: Protocol = c.operation || GRAPHQL_PATH_RE.test(n.pathNorm) ? 'graphql' : websocket ? 'websocket' : 'rest';
+  // operation のパラメータは変数だけ（送信先の URL のクエリは送信先の endpoint のもの）
+  const params = c.operation
+    ? c.params
+    : uniqueParams([
+        ...n.pathParams.map((name) => ({ name, in: 'path' as const })),
+        ...n.queryParams.map((name) => ({ name, in: 'query' as const })),
+        ...c.params.filter((p) => !(protocol === 'graphql' && p.in === 'body' && GRAPHQL_ENVELOPE.has(p.name))),
+      ]);
   const origins = n.origin !== '' ? [n.origin] : pageOrigins.length > 0 ? pageOrigins.map((o) => (websocket ? toWsOrigin(o) : o)) : [''];
   return origins.map((origin) => ({
     protocol,
     origin,
-    method: websocket ? '' : c.method,
+    method: websocket && !c.operation ? '' : c.method,
     pathNorm: n.pathNorm,
     pathTemplate: n.pathTemplate,
+    operation: c.operation?.name ?? '',
+    persistedHash: c.operation?.persistedHash ?? null,
     params,
-    startByte: c.startByte,
-    endByte: c.endByte,
+    ...at,
   }));
 }
 

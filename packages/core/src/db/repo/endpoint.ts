@@ -135,6 +135,21 @@ export function deleteSightingsInRawFile(ctx: HasDb, q: { versionId: string; raw
   );
 }
 
+/** 版に sighting がある GraphQL のエンドポイント（operation の無い、送信先そのもの）の origin とパス */
+export function graphqlTransports(ctx: HasDb, versionId: string): { origin: string; pathNorm: string }[] {
+  return dbCall(
+    () =>
+      ctx.db
+        .prepare(
+          `SELECT DISTINCT e.origin AS origin, e.path_norm AS pathNorm
+           FROM api_endpoint e JOIN endpoint_sighting s ON s.endpoint_id = e.id
+           WHERE s.version_id = ? AND e.protocol = 'graphql' AND e.operation = ''
+           ORDER BY e.path_norm, e.origin`,
+        )
+        .all(versionId) as { origin: string; pathNorm: string }[],
+  );
+}
+
 /** 対象の endpoint を派生値つきで返す（path_norm・method・origin・operation の順） */
 export function listEndpointSummaries(ctx: HasDb, targetId: string): EndpointSummary[] {
   const rows = dbCall(

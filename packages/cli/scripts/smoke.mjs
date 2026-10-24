@@ -11,6 +11,7 @@ import { join } from 'node:path';
 const cli = new URL('../dist/cli.js', import.meta.url).pathname;
 const fixture = new URL('../../core/test/fixtures/webpack5-basic/output/', import.meta.url).pathname;
 const endpointsBundle = new URL('../../core/test/fixtures/webpack5-endpoints/output/main.c452f02c.js', import.meta.url).pathname;
+const graphqlBundle = new URL('../../core/test/fixtures/webpack5-graphql/output/main.d30a92cb.js', import.meta.url).pathname;
 const home = mkdtempSync(join(tmpdir(), 'sa-smoke-'));
 
 /** 引数は配列で渡す（シェルを通さない） */
@@ -25,10 +26,13 @@ try {
   if (r.unpack.moduleCount !== 4 || r.unpack.skipped !== 0 || accepted !== 3) {
     throw new Error(`unexpected load result: ${JSON.stringify({ unpack: r.unpack, accepted })}`);
   }
-  sa('load', 'smoke', endpointsBundle, '--version-id', r.load.versionId);
-  // jsluice は手元の設定次第なので、ここでは ast_url だけ（jsluice は Docker の verify.sh が実行イメージで確かめる）
-  const e = JSON.parse(sa('extract-endpoints', 'smoke', '--extractor', 'ast_url'));
-  if (e.endpoints !== 10 || e.extractors.ast_url?.skipped !== 0) throw new Error(`unexpected extract-endpoints result: ${JSON.stringify(e)}`);
+  sa('load', 'smoke', endpointsBundle, graphqlBundle, '--version-id', r.load.versionId);
+  // jsluice は手元の設定次第なので、ここでは ast_url と graphql だけ（jsluice は Docker の verify.sh が実行イメージで確かめる）
+  // REST 10 件・POST /graphql・GraphQL の operation 7 件
+  const e = JSON.parse(sa('extract-endpoints', 'smoke', '--extractor', 'ast_url', '--extractor', 'graphql'));
+  if (e.endpoints !== 18 || e.extractors.ast_url?.skipped !== 0 || e.extractors.graphql?.found !== 7) {
+    throw new Error(`unexpected extract-endpoints result: ${JSON.stringify(e)}`);
+  }
   const b = JSON.parse(sa('backup', join(home, 'snapshot.db')));
   if (b.schemaVersion < 1) throw new Error(`unexpected backup result: ${JSON.stringify(b)}`);
   console.log(

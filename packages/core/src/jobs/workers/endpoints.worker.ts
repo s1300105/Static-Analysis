@@ -1,6 +1,7 @@
 /**
  * ast_url 抽出器（design.md §7.3 extract_endpoints の 2）。raw の JS をファイルごと Babel でパースし、
  * HTTP クライアントの呼び出しから URL・メソッド・パラメータ名を拾う。データフローは使わない。
+ * 同じ AST から GraphQL の operation も拾う（./graphql.ts。パースを 1 回で済ませる）。
  * unpack が切り出したモジュールの範囲は「範囲」として受け取り、ベース URL と変数の値は範囲ごとに扱う（./bindings.ts）。
  * ファイルごと読むのは、webpack のランタイムに埋め込まれたエントリ（モジュールマップの外）も読むため。
  * worker 側の規約は ./index.ts を参照。
@@ -21,6 +22,7 @@
 import { parse, parseExpression } from '@babel/parser';
 import type { Expression, Node, ObjectExpression } from '@babel/types';
 import { Bindings, type ByteRange, Scopes } from './bindings.ts';
+import { type GraphqlExtractor, extractGraphql } from './graphql.ts';
 import { skip, toByteOffsets, walk } from './shared.ts';
 
 export interface EndpointsInput {
@@ -28,6 +30,24 @@ export interface EndpointsInput {
   bytes: Uint8Array;
   /** unpack が切り出したモジュールの範囲（raw のバイト位置）。無ければファイル全体が 1 つの範囲 */
   modules?: ByteRange[];
+  /** HTTP クライアントの呼び出しを拾う（ast_url。既定 true） */
+  rest?: boolean;
+  /** GraphQL の operation を拾う（./graphql.ts。既定 false） */
+  graphql?: boolean;
+}
+
+export interface GraphqlOperation {
+  extractor: GraphqlExtractor;
+  /** operation 名。無名は '' */
+  name: string;
+  /** query / mutation / subscription */
+  kind: string;
+  variables: string[];
+  /** persisted query の id（Relay の params.id） */
+  persistedId: string | null;
+  /** 見つけた式（テンプレート・文字列・DocumentNode・Relay の生成物）の raw のバイト範囲 */
+  startByte: number;
+  endByte: number;
 }
 
 export interface ExtractedParam {
@@ -53,6 +73,7 @@ export interface EndpointsOutput {
   calls: ExtractedCall[];
   /** 範囲ごとに推定できたベース URL（ソースの順） */
   bases: string[];
+  graphql: GraphqlOperation[];
 }
 
 type Part = { lit: string } | { expr: string | undefined };
@@ -82,7 +103,7 @@ interface Candidate extends Omit<ExtractedCall, 'url' | 'startByte' | 'endByte'>
 /** 範囲 scope の中で値が文字列に決まる変数を引く */
 type Constants = (name: string) => string | undefined;
 
-export default function extractEndpointCalls(input: EndpointsInput): EndpointsOutput {
+export default function extractFromJs(input: EndpointsInput): EndpointsOutput {
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(input.bytes);
@@ -92,6 +113,32 @@ export default function extractEndpointCalls(input: EndpointsInput): EndpointsOu
   const root = parseModule(text);
   const scopes = new Scopes(input.bytes, input.modules ?? []);
   const bindings = new Bindings(root, scopes);
+  const rest = input.rest !== false ? restCalls(root, scopes, bindings) : { candidates: [], bases: [] };
+  const graphql = input.graphql === true ? extractGraphql(root, scopes, bindings) : [];
+
+  const offsets = toByteOffsets(text, [...rest.candidates, ...graphql].flatMap((c) => [c.start, c.end]));
+  const calls: ExtractedCall[] = [];
+  const seen = new Set<string>();
+  for (const c of rest.candidates) {
+    const key = `${c.start}:${c.method}:${c.url}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const { start, end, ...call } = c;
+    calls.push({ ...call, startByte: offsets.get(start)!, endByte: offsets.get(end)! });
+  }
+  return {
+    calls,
+    bases: rest.bases,
+    graphql: graphql.map(({ start, end, ...op }) => ({ ...op, startByte: offsets.get(start)!, endByte: offsets.get(end)! })),
+  };
+}
+
+/** HTTP クライアントの呼び出し（URL は描画済み、位置は文字位置）とベース URL */
+function restCalls(
+  root: Node,
+  scopes: Scopes,
+  bindings: Bindings,
+): { candidates: (Omit<ExtractedCall, 'startByte' | 'endByte'> & { start: number; end: number })[]; bases: string[] } {
   const constantsOf = (scope: number): Constants => (name) => literalString(bindings.get(scope, name));
   // 範囲ごとのベース URL の候補（最初に見つけた位置も持って、出力をソースの順にする）
   const baseCandidates = new Map<number, { values: Set<string>; at: number }>();
@@ -126,22 +173,17 @@ export default function extractEndpointCalls(input: EndpointsInput): EndpointsOu
   for (const [scope, b] of baseCandidates) if (b.values.size === 1) bases.set(scope, { value: [...b.values][0]!, at: b.at });
   // walk は順不同なので、ソースの順に並べる（出力を決定的にする）
   candidates.sort((a, b) => a.start - b.start || a.end - b.end);
-  const offsets = toByteOffsets(text, candidates.flatMap((c) => [c.start, c.end]));
-  const calls: ExtractedCall[] = [];
-  const seen = new Set<string>();
-  for (const c of candidates) {
-    let url = render(c.parts);
-    const base = bases.get(c.scope)?.value;
-    if (c.via === 'method' && base !== undefined && isPathRelative(url) && !url.startsWith(base)) {
-      url = `${base.replace(/\/+$/, '')}/${url.replace(/^\/+/, '')}`;
-    }
-    const key = `${c.start}:${c.method}:${url}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const { parts: _parts, start, end, scope: _scope, ...rest } = c;
-    calls.push({ ...rest, url, startByte: offsets.get(start)!, endByte: offsets.get(end)! });
-  }
-  return { calls, bases: [...bases.values()].sort((a, b) => a.at - b.at).map((b) => b.value) };
+  return {
+    candidates: candidates.map(({ parts, scope, ...c }) => {
+      let url = render(parts);
+      const base = bases.get(scope)?.value;
+      if (c.via === 'method' && base !== undefined && isPathRelative(url) && !url.startsWith(base)) {
+        url = `${base.replace(/\/+$/, '')}/${url.replace(/^\/+/, '')}`;
+      }
+      return { ...c, url };
+    }),
+    bases: [...bases.values()].sort((a, b) => a.at - b.at).map((b) => b.value),
+  };
 }
 
 /**

@@ -113,14 +113,14 @@ packages/core/src/
 │  ├─ runner.ts      JobRunner: runWorker() / runChild()（上限・タイムアウト）
 │  ├─ skips.ts       SkipLog（理由別のスキップ記録 → analysis_run.skipped_detail）
 │  └─ workers/       unpack / sourcemap / endpoints の *.worker.ts（worker_threads のエントリ。index.ts が src/dist の置き場所を解決）
-│                    と shared.ts（AST の走査・位置の変換）・bindings.ts（範囲ごとの変数の値）
+│                    と shared.ts（AST の走査・位置の変換）・bindings.ts（範囲ごとの変数の値）・graphql.ts（GraphQL の operation）
 ├─ policy/
 │  ├─ paths.ts       generateWorkPath() / generateOriginalSourcePath() / assertWithinWorkspace() / writeWorkFile()（原則8）
 │  ├─ llm.ts         enforceLlmCodePolicy()（コード本文を返す出口で検査）
 │  └─ transitions.ts 状態遷移の権限表（誰がどの state 遷移を許されるか）
 ├─ artifact/         load / unpack / relink / pretty / sourcemap / chunks / har
 ├─ intel/            resolveLocation / getFunction / findReferences / callPath
-├─ analysis/         endpoints/（normalize・extract・list）/ diffVersions / detectStack / taintPaths / originValidation
+├─ analysis/         endpoints/（normalize・extract・babel・jsluice・sightings・list）/ diffVersions / detectStack / taintPaths / originValidation
 ├─ findings/         candidate / evidence / refutation / triage / facts / calibration / export
 └─ index.ts          公開 API（入口が呼ぶ関数だけ re-export）
 ```
@@ -336,7 +336,7 @@ callPath(ctx, { candidateId? , pathResultId }): CallPathResult;                 
 
 ```ts
 detectStack(ctx, { versionId }): DetectedLibrary[];                                                             // ○  手順4
-extractEndpoints(ctx, { versionId, extractors? })
+extractEndpoints(ctx, { versionId, extractors? /* ast_url / jsluice / graphql */ })
   : Promise<{ versionId; extractors: { [name]: { runId; inputs; found; dropped; sightings; skipped } }; unavailable; endpoints; sightings }>; // ○ 手順2
 listEndpoints(ctx, { targetId, all? }): EndpointListItem[];  // VIEW の派生値＋パラメータの和集合                  // ○読 手順2
 diffVersions(ctx, { versionId, baseVersionId }): DiffResult;                                                    // ○  手順2/6
@@ -352,8 +352,9 @@ runRules(ctx, { versionId }): RuleHit[];                                        
 E1 の取り決め（PR-7・PR-8）:
 - `path_norm` は `analysis/endpoints/normalize.ts` の `normalizeEndpointUrl` だけで作る（全抽出器で共通）。スコープ判定は `policy/scope.ts` と
   VIEW `api_endpoint_summary` が同じ規則を持ち、テストで一致を確かめる。
-- 抽出器ごとに analysis_run を 1 行作る（tool は `extract_endpoints/ast_url`・`extract_endpoints/jsluice`）。sighting の run_id はその行。
-  既定では使える抽出器をすべて掛ける（ast_url → jsluice の順）。jsluice の設定が無ければ `unavailable` に入れて続ける（明示したときは誤り）。
+- 抽出器ごとに analysis_run を 1 行作る（tool は `extract_endpoints/ast_url`・`extract_endpoints/jsluice`・`extract_endpoints/graphql`）。
+  sighting の run_id はその行。既定では使える抽出器をすべて掛ける。jsluice の設定が無ければ `unavailable` に入れて続ける（明示したときは誤り）。
+  ast_url と graphql は Babel のパースを共有し（`analysis/endpoints/babel.ts`）、書き込みは ast_url → jsluice → graphql の順。
 - ast_url は **HTTP クライアントの呼び出し**（fetch / new Request、`x.get/post/…`、`{ url, method, … }` の設定オブジェクトと `$.ajax`、
   `xhr.open`、`sendBeacon`、`new WebSocket` / `new EventSource`）だけを拾う。呼び出しに渡らない URL らしい文字列は jsluice（PR-9）に任せる
   （SPA のルート定義・静的ファイルのパスを拾わないため）。method の無い fetch / 設定オブジェクトは GET、method が式なら不明（`''`）。
@@ -365,6 +366,16 @@ E1 の取り決め（PR-7・PR-8）:
   無い名前だけ使う（`jobs/workers/bindings.ts`）。位置は呼び出し式の raw 基準のバイト範囲で `code_location` に置き、表示用の行・列も入れる。
 - 相対 URL の origin は raw の `loaded_by_origins`（http(s) のオリジン）で補う（design.md §6.2）。複数あればそれぞれの endpoint にし、
   無ければ `''`。相対の WebSocket は ws(s) にする。パスに固定の部分が無く origin も分からない URL は捨てる（`dropped`）。
+- GraphQL（PR-10。sighting の extracted_by は graphql_text / graphql_ast / relay）:
+  - graphql_text: テンプレートリテラル（タグの名前は minify で変わるので問わない）・文字列・変換後のタグ付きテンプレート（文字列の配列）のうち、
+    先頭が query / mutation / subscription / fragment で graphql-js が読めるもの。`${...}` は除いて読む。名前の無い `{ ... }` はタグが gql / graphql のときだけ
+  - graphql_ast: `kind: "Document"` のオブジェクトリテラル。`loc.source.body` があれば読み、無ければ definitions を静的に評価する
+    （リテラル・配列・オブジェクト・`!0`・代入式・`[...].concat(...)`・値の決まる変数）
+  - relay: params に name と operationKind を持つオブジェクト。params.text があれば読み、無ければ argumentDefinitions から変数名。params.id を persisted_hash に
+  - 生成物と DocumentNode の中の文字列は graphql_text で重ねて数えない。fragment だけの文書はエンドポイントにしない
+  - endpoint: protocol は graphql、method は operation の種類（QUERY / MUTATION / SUBSCRIPTION）、operation は名前（無名は ''）、
+    パラメータは変数（graphql_var）。送信先は版の GraphQL のエンドポイント（operation の無いもの）のパスが 1 つに決まればそれ（origin が複数ならそれぞれ）、
+    決まらなければ origin・パスとも ''。operation の文書（本文）は保存せず、`export_endpoints`（PR-13）が位置から読み直す
 - jsluice（PR-9）は raw ファイルごとに子プロセスで掛ける（tree-sitter なので Babel が読めなかったファイルも読む）。出力の癖を直す:
   同じ式の重複（method の有無だけ違う）は 1 つにまとめ、報告済みの呼び出しの範囲に入る文字列リテラルは捨て、`x.get(...)` などの
   method は `type` から補い、送信部（ast_url と同じ規則）と文字列リテラルだけの静的ファイルのパスは捨てる。
@@ -527,7 +538,8 @@ M2（第1段 E1。計画書 M2）の PR 単位:
    `path_norm` の正規化（`analysis/endpoints/normalize.ts`）、スコープ判定（`policy/scope.ts`。VIEW の in_scope と同じ規則）、リポジトリ関数。
 8. **PR-8 ast_url 抽出器**: Babel AST から HTTP クライアントの呼び出しを拾う `extractEndpoints`（worker）、`listEndpoints`、`sa extract-endpoints` / `sa endpoints`。
 9. **PR-9 jsluice 抽出器**: 子プロセス＋raw への位置戻し。ツールのパスを設定（`tools`・`SA_TOOLS`）に足す。
-10. **PR-10 GraphQL 抽出**: graphql-js（本文・DocumentNode・Relay・persisted hash）。
+10. **PR-10 GraphQL 抽出**: graphql-js（本文・DocumentNode・Relay・persisted hash）。あわせて ast_url を raw のファイルごとの読み取りに直した
+    （webpack のランタイムに埋め込まれたエントリを落としていた）。
 11. **PR-11 `import_har`**: 許可リスト抽出（HAR を保存しない・値を残さないテスト）、`page_context`、`extracted_by='har'` の sighting。
 12. **PR-12 `find_missing_chunks`**: チャンクマップ・動的 import・`sourceMappingURL`・`*.LICENSE.txt`、対象外ホストの区別。
 13. **PR-13 `diff_versions`・並び順・`export_endpoints`・triage**: 版間差分（未収集による差を別枠）、決定的な並び順、OpenAPI 3 / GraphQL 文書、`sa triage-endpoint`。

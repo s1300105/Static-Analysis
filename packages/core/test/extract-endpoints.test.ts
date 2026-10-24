@@ -76,7 +76,9 @@ describe('extractEndpoints (ast_url)', () => {
     // jsluice は設定が無いので掛けない
     expect(r).toMatchObject({ versionId, endpoints: 10, sightings: 10, unavailable: ['jsluice'] });
     expect(r.extractors.ast_url).toMatchObject({ inputs: 1, found: 10, dropped: 0, sightings: 10, skipped: 0 });
-    expect(Object.keys(r.extractors)).toEqual(['ast_url']);
+    // この fixture に GraphQL は無い
+    expect(Object.keys(r.extractors)).toEqual(['ast_url', 'graphql']);
+    expect(r.extractors.graphql).toMatchObject({ found: 0, sightings: 0 });
     expect(byKey(asExpected(ctx, targetId))).toEqual(byKey(expected.endpoints));
 
     const run = getAnalysisRun(ctx, r.extractors.ast_url!.runId)!;
@@ -193,7 +195,7 @@ describe('extractEndpoints (ast_url)', () => {
     // モジュールマップにはモジュールが 1 つ（Relay の生成物）だけ。fetch はランタイムの中のエントリにある
     const [module] = listArtifactFiles(ctx, { versionId, layer: 'unpacked' });
     expect(module).toMatchObject({ origName: '979' });
-    const r = await extractEndpoints(ctx, { versionId });
+    const r = await extractEndpoints(ctx, { versionId, extractors: ['ast_url'] });
     expect(r.extractors.ast_url).toMatchObject({ found: 1, sightings: 1 });
     expect(listEndpoints(ctx, { targetId })).toMatchObject([{ protocol: 'graphql', method: 'POST', pathNorm: '/graphql', operation: '' }]);
     const [row] = sightingRows(ctx, versionId);

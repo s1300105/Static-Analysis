@@ -12,6 +12,7 @@
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { version as graphqlVersion } from 'graphql';
 import { defineWorker } from '../runner';
 import type { EndpointsInput, EndpointsOutput } from './endpoints.worker';
 import type { SourcemapInput, SourcemapOutput } from './sourcemap.worker';
@@ -28,6 +29,9 @@ function workerUrl(name: string): URL {
 export const unpackWorker = defineWorker<UnpackInput, UnpackOutput>('unpack', workerUrl('unpack'));
 export const sourcemapWorker = defineWorker<SourcemapInput, SourcemapOutput>('sourcemap', workerUrl('sourcemap'));
 export const endpointsWorker = defineWorker<EndpointsInput, EndpointsOutput>('endpoints', workerUrl('endpoints'));
+
+/** analysis_run.tool_version に残す graphql-js の版（GraphQL の抽出） */
+export const GRAPHQL_JS_VERSION: string = graphqlVersion;
 
 /** analysis_run.tool_version に残す Babel パーサの版 */
 export const BABEL_PARSER_VERSION: string = (
