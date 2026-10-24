@@ -488,6 +488,19 @@ design.md §6.6 の規約を実装規則として固定する。
    → D4 は既定案で決定。LLM を使わない解析は `docker run --network none`、LLM を使うときは内部ネットワーク（`internal: true`）＋
    `api.anthropic.com:443` だけを通す squid（`docker/compose.yaml`）。確認は `docker/verify.sh`（CI: `.github/workflows/docker.yml`）。
 
+M2（第1段 E1。計画書 M2）の PR 単位:
+
+7. **PR-7 E1 のスキーマ**: `0002_e1.sql`（`api_endpoint`・`endpoint_sighting`・`page_context`、派生値の VIEW `api_endpoint_summary`）、
+   `path_norm` の正規化（`analysis/endpoints/normalize.ts`）、スコープ判定（`policy/scope.ts`。VIEW の in_scope と同じ規則）、リポジトリ関数。
+8. **PR-8 ast_url 抽出器**: Babel AST から HTTP クライアント呼び出しと URL らしい文字列を拾う `extractEndpoints`（worker）、`sa extract-endpoints` / `sa endpoints`。
+9. **PR-9 jsluice 抽出器**: 子プロセス＋raw への位置戻し。ツールのパスを設定に足す。
+10. **PR-10 GraphQL 抽出**: graphql-js（本文・DocumentNode・Relay・persisted hash）。
+11. **PR-11 `import_har`**: 許可リスト抽出（HAR を保存しない・値を残さないテスト）、`page_context`、`extracted_by='har'` の sighting。
+12. **PR-12 `find_missing_chunks`**: チャンクマップ・動的 import・`sourceMappingURL`・`*.LICENSE.txt`、対象外ホストの区別。
+13. **PR-13 `diff_versions`・並び順・`export_endpoints`・triage**: 版間差分（未収集による差を別枠）、決定的な並び順、OpenAPI 3 / GraphQL 文書、`sa triage-endpoint`。
+14. **PR-14 sa-mcp の最小版**: `extract_endpoints` / `diff_versions` / `find_missing_chunks` を読み取りとして公開。
+15. **PR-15 手順6の前提確認**: 実デプロイ 2 版で関数の exact / fuzzy / 不一致の割合を記録するスクリプト。
+
 並行して `@sa/eval` 側で M0（E1 採点基盤）を進められる（計画書 §3 の依存関係）。
 以降は計画書のマイルストーン（M2 以降）に従い、本文書の §5 のシグネチャを実装していく。
 

@@ -10,11 +10,21 @@ export const LlmCodePolicySchema = z.enum(LLM_CODE_POLICIES).default('deny');
 
 export const ThirdPartyCodeSchema = z.enum(['in_scope', 'out_of_scope', 'report_to_vendor']);
 
+/**
+ * スコープのホストの書き方: "example.com"（そのホストだけ）か "*.example.com"（サブドメインだけ。example.com 自体は含まない）。
+ * スキーム・ポート・パスは書かない（パスの単位の対象外は notes に書く）。
+ */
+export const HostPatternSchema = z
+  .string()
+  .regex(/^(\*\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/i, {
+    message: 'use a host name like "example.com" or "*.example.com" (no scheme, port or path)',
+  });
+
 /** target.scope: 許可ドメイン・対象外・プログラム規約メモ・LLM 送信可否（design.md §6.1） */
 export const TargetScopeSchema = z
   .object({
-    allowed_domains: z.array(z.string().min(1)).default([]),
-    out_of_scope: z.array(z.string().min(1)).default([]),
+    allowed_domains: z.array(HostPatternSchema).default([]),
+    out_of_scope: z.array(HostPatternSchema).default([]),
     llm_code_policy: LlmCodePolicySchema,
     /** llm_code_policy の確認日（日付か日時）と根拠の URL（プログラム規約のページ）（design.md §6.1） */
     llm_code_policy_confirmed_at: z.union([z.string().date(), z.string().datetime({ offset: true })]).optional(),

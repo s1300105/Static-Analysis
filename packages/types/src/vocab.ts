@@ -161,3 +161,15 @@ export type ParseStatus = (typeof PARSE_STATUSES)[number];
 // --- sa-core を呼ぶ入口（権限と公開範囲の判定に使う。docs/architecture.md §3.2） ---
 export const CALLER_KINDS = ['cli', 'mcp', 'orchestrator'] as const;
 export type CallerKind = (typeof CALLER_KINDS)[number];
+
+// --- E1: エンドポイントの抽出器（endpoint_sighting.extracted_by。design.md §6.2・§7.3） ---
+export const ENDPOINT_EXTRACTORS = ['jsluice', 'ast_url', 'graphql_text', 'graphql_ast', 'relay', 'har'] as const;
+export type EndpointExtractor = (typeof ENDPOINT_EXTRACTORS)[number];
+
+// --- E1: パラメータの置き場所（endpoint_sighting.params[].in） ---
+export const PARAM_LOCATIONS = ['query', 'body', 'path', 'header', 'graphql_var'] as const;
+export type ParamLocation = (typeof PARAM_LOCATIONS)[number];
+
+// --- E1: 人間の triage（api_endpoint.triage。CLI/UI だけが書く） ---
+export const ENDPOINT_TRIAGES = ['untested', 'tested', 'interesting', 'ignore'] as const;
+export type EndpointTriage = (typeof ENDPOINT_TRIAGES)[number];

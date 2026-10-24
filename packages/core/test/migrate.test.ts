@@ -140,7 +140,7 @@ describe('migrate', () => {
   });
 });
 
-describe('0001_init schema', () => {
+describe('schema (0001_init, 0002_e1)', () => {
   function fresh(): Database {
     const db = openTracked(':memory:');
     migrate(db);
@@ -164,13 +164,16 @@ describe('0001_init schema', () => {
     );
   }
 
-  it('creates the M1 tables', () => {
+  it('creates the M1 and E1 tables', () => {
     expect(tableNames(fresh())).toEqual([
       'analysis_run',
+      'api_endpoint',
       'artifact_file',
       'artifact_version',
       'code_location',
+      'endpoint_sighting',
       'expected_chunk',
+      'page_context',
       'target',
     ]);
   });

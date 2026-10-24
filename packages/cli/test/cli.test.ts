@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CLI_VERSION, run } from '@sa/cli';
+import { SCHEMA_VERSION } from '@sa/core';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -180,7 +181,7 @@ describe('sa backup', () => {
     await sa('target', 'add', 'example');
     const r = await sa('--json', 'backup', 'snapshot.db');
     expect(r.code).toBe(0);
-    expect(r.json()).toMatchObject({ path: join(home, 'snapshot.db'), schemaVersion: 1, blobDir: join(home, 'blobs') });
+    expect(r.json()).toMatchObject({ path: join(home, 'snapshot.db'), schemaVersion: SCHEMA_VERSION, blobDir: join(home, 'blobs') });
     expect(existsSync(join(home, 'snapshot.db'))).toBe(true);
     expect((await sa('backup', 'snapshot.db')).code).toBe(2);
   });
