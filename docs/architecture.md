@@ -511,6 +511,14 @@ MCP TypeScript SDK（stdio）。`caller='mcp'`。design.md §7 で「MCP ○」�
 - 人間判定・事実・`target.scope`・`api_endpoint.triage` の書き込みツールは**登録しない**（二重防御の一層。もう一層は §3.6 の caller 拒否）。
 - MCP からエージェントを起動しない（反証役の起動は Orchestrator の責務）。
 
+PR-14（最小版）での取り決め:
+- `@modelcontextprotocol/sdk` の McpServer（stdio）。`sa-mcp` は `SA_HOME` / `SA_CONFIG` / `SA_TOOLS` で sa と同じ設定を読み、`caller='mcp'` で
+  SaContext を開く（`createMcpServer` は caller が mcp でなければ作らない）
+- 公開するのは手順2の `extract_endpoints`（抽出と、並び順の上位 200 件。規則と triage 待ちを併記）・`diff_versions`・`find_missing_chunks`。
+  対象は ID か名前、版は省けば最新。返すのは ID・URL・パラメータ名・件数だけで、コード本文は返さない
+- sa-core の誤り（SaError）はツールの誤り（`isError`、`<code>: <message>`）として返す。テストはインメモリの transport でクライアントから呼び、
+  ビルド後の `sa-mcp` は `pnpm smoke`（`packages/mcp/scripts/smoke.mjs`）で stdio 越しに確かめる
+
 ### 6.3 `@sa/orchestrator`（Claude Agent SDK）
 
 MVP では手順4（M4）で導入。それまでは §5.3 の決定的な並びとクラス既定値で動く（計画書）。

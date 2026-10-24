@@ -14,12 +14,16 @@
   "bin": {
     "sa-mcp": "./dist/server.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup src/index.ts src/server.ts --format esm --dts --clean"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@sa/core": "workspace:*",
-    "@sa/types": "workspace:*"
+    "@sa/types": "workspace:*",
+    "zod": "^3.25.76"
   }
 }
