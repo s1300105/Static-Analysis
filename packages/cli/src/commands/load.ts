@@ -7,7 +7,7 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { type IngestResult, SaError, findTarget, ingestArtifacts } from '@sa/core';
 import type { LoadArtifactFile } from '@sa/types';
 import type { Command } from 'commander';
-import { type CliIo, absolute, emit, withContext } from '../io';
+import { type CliIo, absolute, emit, parseJsonObject, withContext } from '../io';
 
 interface LoadOptions {
   versionId?: string;
@@ -62,10 +62,17 @@ export function registerLoadCommand(program: Command, io: CliIo): void {
 }
 
 function summary(r: IngestResult): string[] {
-  const { load, unpack } = r;
-  const lines = [
+  const { load } = r;
+  return [
     `version ${load.versionId}${load.createdVersion ? ' (new)' : ''}: ${load.fileIds.length} files, ${load.added} added`,
+    ...afterLoadLines(r),
   ];
+}
+
+/** unpack と sourcemap の取り込みの結果（sa load・sa import-har で共通） */
+export function afterLoadLines(r: Pick<IngestResult, 'unpack' | 'sourcemaps'>): string[] {
+  const { unpack } = r;
+  const lines: string[] = [];
   if (unpack) {
     const bundlers = Object.entries(unpack.bundlers)
       .map(([b, n]) => `${b} ${n}`)
@@ -101,15 +108,4 @@ function readManifest(file: string): LoadArtifactFile[] {
     const e = entry as LoadArtifactFile;
     return typeof e?.path === 'string' && !isAbsolute(e.path) ? { ...e, path: resolve(dirname(file), e.path) } : e;
   });
-}
-
-function parseJsonObject(text: string, what: string): Record<string, unknown> {
-  let v: unknown;
-  try {
-    v = JSON.parse(text);
-  } catch (err) {
-    throw new SaError('INVALID_INPUT', `${what} must be JSON`, undefined, { cause: err });
-  }
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new SaError('INVALID_INPUT', `${what} must be a JSON object`);
-  return v as Record<string, unknown>;
 }

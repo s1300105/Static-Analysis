@@ -1,6 +1,7 @@
 import { Command, CommanderError } from 'commander';
 import { registerBackupCommand } from './commands/backup';
 import { registerEndpointCommands } from './commands/endpoints';
+import { registerImportHarCommand } from './commands/har';
 import { registerLoadCommand } from './commands/load';
 import { registerTargetCommands } from './commands/target';
 import { type CliIo, describeFailure } from './io';
@@ -29,6 +30,7 @@ export function buildProgram(io: CliIo): Command {
 
   registerTargetCommands(program, io);
   registerLoadCommand(program, io);
+  registerImportHarCommand(program, io);
   registerEndpointCommands(program, io);
   registerBackupCommand(program, io);
   return program;

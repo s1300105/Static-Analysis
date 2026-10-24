@@ -7,7 +7,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { basename, extname } from 'node:path';
-import { type ArtifactKind, type LoadArtifactInput, LoadArtifactInputSchema } from '@sa/types';
+import { type ArtifactKind, type LoadArtifactFile, type LoadArtifactInput, LoadArtifactInputSchema } from '@sa/types';
 import type { SaContext } from '../context';
 import { withTxn } from '../db/connection';
 import { findArtifactFileByHash, insertArtifactFile, updateArtifactFile } from '../db/repo/artifactFile';
@@ -28,9 +28,28 @@ export interface LoadArtifactResult {
   added: number;
 }
 
-export function loadArtifact(ctx: SaContext, input: LoadArtifactInput): LoadArtifactResult {
-  const req = parseInput(LoadArtifactInputSchema, input, 'load_artifact');
+/** 取り込む中身 1 つ（人間が渡したファイル、import_har が抜き出したレスポンス本文） */
+export interface RawFileInput extends Omit<LoadArtifactFile, 'path'> {
+  /** 種類の判定と表示用の名前に使う（ファイルのパスか、URL のパス） */
+  name: string;
+  bytes: Uint8Array;
+}
 
+/** 足す先の版。versionId が無ければ新しい版を作る（collectedAt が要る） */
+export type VersionSpec = Omit<LoadArtifactInput, 'files'>;
+
+export function loadArtifact(ctx: SaContext, input: LoadArtifactInput): LoadArtifactResult {
+  const { files, ...spec } = parseInput(LoadArtifactInputSchema, input, 'load_artifact');
+  checkVersionSpec(ctx, spec);
+  return addRawFiles(
+    ctx,
+    spec,
+    files.map(({ path, ...f }) => ({ ...f, name: path, bytes: readInputFile(path), origName: f.origName ?? basename(path) })),
+  );
+}
+
+/** 足す先の版の指定を確かめる（対象・既存の版・基準の版） */
+export function checkVersionSpec(ctx: SaContext, req: VersionSpec): void {
   if (!getTarget(ctx, req.targetId)) throw new SaError('NOT_FOUND', `target not found: ${req.targetId}`);
   if (req.versionId !== undefined) {
     const v = getArtifactVersion(ctx, req.versionId);
@@ -48,13 +67,18 @@ export function loadArtifact(ctx: SaContext, input: LoadArtifactInput): LoadArti
       if (base.targetId !== req.targetId) throw new SaError('INVALID_INPUT', 'base version belongs to another target');
     }
   }
+}
 
-  // ファイルを読んで blob に置くまではトランザクションの外（中身は content_hash 名なので、後で失敗しても害が無い）
-  const files = req.files.map((f) => {
-    const bytes = readInputFile(f.path);
-    const kind = detectKind(f.path, bytes);
+/**
+ * 中身を raw 層に置く（spec は checkVersionSpec を通したもの）。版が無ければ作る。
+ * files が空なら、版を作るだけ（import_har で JS が 1 つも無かったとき）
+ */
+export function addRawFiles(ctx: SaContext, req: VersionSpec, input: RawFileInput[]): LoadArtifactResult {
+  // blob に置くまではトランザクションの外（中身は content_hash 名なので、後で失敗しても害が無い）
+  const files = input.map(({ bytes, name, ...f }) => {
+    const kind = detectKind(name, bytes);
     const { hash } = ctx.store.put(bytes);
-    return { ...f, kind, hash, origName: f.origName ?? basename(f.path) };
+    return { ...f, kind, hash, origName: f.origName ?? basename(name) };
   });
 
   return withTxn(ctx, () => {

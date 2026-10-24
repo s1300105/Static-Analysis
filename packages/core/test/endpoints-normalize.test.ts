@@ -27,6 +27,11 @@ describe('normalizeEndpointUrl', () => {
     ['api//v2/./things', '', '/api/v2/things', '/api/v2/things'],
     ['https://${host}.example.com/x', 'https://{}.example.com', '/x', '/x'],
     ['https://api.example.com', 'https://api.example.com', '/', '/'],
+    // HAR の観測値: トークン・メールアドレスに見えるセグメント
+    ['/reset/aZ3kP9qL2mX7vB1nC5dR8tY', '', '/reset/{}', '/reset/:token'],
+    ['/users/alice%40example.com/settings', '', '/users/{}/settings', '/users/:email/settings'],
+    ['/users/alice@example.com/settings', '', '/users/{}/settings', '/users/:email/settings'],
+    ['/docs/getting-started-with-the-api', '', '/docs/getting-started-with-the-api', '/docs/getting-started-with-the-api'],
   ])('%s', (input, origin, pathNorm, pathTemplate) => {
     expect(normalizeEndpointUrl(input)).toMatchObject({ origin, pathNorm, pathTemplate });
   });

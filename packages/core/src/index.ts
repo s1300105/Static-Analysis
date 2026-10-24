@@ -60,7 +60,16 @@ export {
 export { loadArtifact, type LoadArtifactResult } from './artifact/load';
 export { unpackBundle, type UnpackBundleOptions, type UnpackBundleResult } from './artifact/unpack';
 export { importSourcemap, type ImportSourcemapOptions, type ImportSourcemapResult } from './artifact/sourcemap';
-export { ingestArtifacts, type IngestOptions, type IngestResult, type SourcemapIngest } from './artifact/ingest';
+export {
+  ingestArtifacts,
+  ingestHar,
+  type HarIngestResult,
+  type IngestOptions,
+  type IngestResult,
+  type SourcemapIngest,
+} from './artifact/ingest';
+export { importHar, type ImportHarResult } from './artifact/har';
+export type { PageContext, PageSecurityHeaders } from './db/repo/pageContext';
 // Analysis（design.md §7.3）。E1: エンドポイントの抽出と一覧
 export {
   CODE_EXTRACTORS,
@@ -71,6 +80,7 @@ export {
   type ExtractorStats,
 } from './analysis/endpoints/extract';
 export { listEndpoints, type EndpointListItem, type EndpointSummary, type ListEndpointsOptions } from './analysis/endpoints/list';
+export type { HarMatchResult } from './analysis/endpoints/har';
 export { normalizeEndpointUrl, type NormalizedEndpoint } from './analysis/endpoints/normalize';
 
 export { CORE_VERSION } from './version';

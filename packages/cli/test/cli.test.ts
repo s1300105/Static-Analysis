@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -43,7 +43,7 @@ describe('sa', () => {
     expect(await sa('--version')).toMatchObject({ code: 0, stdout: `${CLI_VERSION}\n` });
     const help = await sa('--help');
     expect(help.code).toBe(0);
-    for (const c of ['target', 'load', 'extract-endpoints', 'endpoints', 'backup']) expect(help.stdout).toContain(c);
+    for (const c of ['target', 'load', 'import-har', 'extract-endpoints', 'endpoints', 'backup']) expect(help.stdout).toContain(c);
   });
 
   it('rejects unknown commands and options as usage errors', async () => {
@@ -271,6 +271,65 @@ console.log(JSON.stringify({ url: '/hidden/admin', type: 'stringLiteral', source
     expect(r.code).toBe(0);
     expect(r.json()).toMatchObject({ endpoints: 1, extractors: { jsluice: { inputs: 1, found: 1, sightings: 1 } }, unavailable: [] });
     expect((await sa('endpoints', 'example')).stdout).toContain('?       /hidden/admin  (scope ?; 1 sighting)');
+  });
+});
+
+describe('sa import-har', () => {
+  /** 文書・JS（本文つき）・API の呼び出し 1 つずつの HAR */
+  function writeHar(dir: string): string {
+    const entry = (url: string, resourceType: string, content: Record<string, unknown>, headers: unknown[] = []) => ({
+      pageref: 'p',
+      startedDateTime: '2026-10-03T08:00:00.000Z',
+      _resourceType: resourceType,
+      request: { method: 'GET', url, headers: [{ name: 'Authorization', value: 'Bearer do-not-keep' }] },
+      response: { status: 200, headers, content },
+    });
+    const har = {
+      log: {
+        pages: [{ id: 'p', title: 'https://app.example.com/', startedDateTime: '2026-10-03T08:00:00.000Z' }],
+        entries: [
+          entry('https://app.example.com/', 'document', { mimeType: 'text/html', text: '<html></html>' }, [
+            { name: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          ]),
+          entry('https://app.example.com/main.c452f02c.js', 'script', { mimeType: 'text/javascript', text: readFileSync(endpointsBundle, 'utf8') }),
+          entry('https://app.example.com/api/v2/users/42?include=do-not-keep', 'xhr', { mimeType: 'application/json', text: '{}' }),
+        ],
+      },
+    };
+    const path = join(dir, 'capture.har');
+    writeFileSync(path, JSON.stringify(har));
+    return path;
+  }
+
+  it('imports a HAR into the extracted version and marks what it observed', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    await sa('target', 'add', 'example');
+    const loaded = await sa('--json', 'load', 'example', endpointsBundle, '--collected-at', '2026-10-03T07:00:00Z');
+    const versionId = loaded.json<{ load: { versionId: string } }>().load.versionId;
+    await sa('extract-endpoints', 'example');
+
+    const r = await sa('import-har', 'example', writeHar(home), '--version-id', versionId);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(`version ${versionId}: 3 entries (0 unreadable, 0 ignored)`);
+    expect(r.stdout).toContain('scripts: 1 files, 0 added, 0 without a body in the HAR');
+    expect(r.stdout).toContain('api: 1 requests, 1 matched extracted endpoints, 0 only in the HAR');
+    expect(r.stdout).toContain('pages: 1 documents with security headers');
+    expect((await sa('endpoints', 'example')).stdout).toContain(
+      'GET     /api/v2/users/:param  [query:include]  (scope ?; 2 sightings, seen in HAR)',
+    );
+  });
+
+  it('creates a version from the HAR alone and rejects other files', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    await sa('target', 'add', 'example');
+    const r = await sa('--json', 'import-har', 'example', writeHar(home), '--label', 'har-only');
+    expect(r.code).toBe(0);
+    expect(r.json()).toMatchObject({ har: { createdVersion: true, scripts: { added: 1 }, api: { harOnly: 1 } }, unpack: { files: 1 } });
+    const bad = await sa('import-har', 'example', endpointsBundle);
+    expect(bad.code).toBe(2);
+    expect(bad.stderr).toContain('not a HAR file');
   });
 });
 

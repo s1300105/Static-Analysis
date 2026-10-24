@@ -135,6 +135,41 @@ export function deleteSightingsInRawFile(ctx: HasDb, q: { versionId: string; raw
   );
 }
 
+export interface EndpointRow extends EndpointKey {
+  id: string;
+  persistedHash: string | null;
+}
+
+/** 対象の endpoint のキー（import_har の照合に使う。派生値は持たない） */
+export function listEndpointRows(ctx: HasDb, targetId: string): EndpointRow[] {
+  return dbCall(
+    () =>
+      ctx.db
+        .prepare(
+          `SELECT id, target_id AS targetId, protocol, origin, method, path_norm AS pathNorm, operation, persisted_hash AS persistedHash
+           FROM api_endpoint WHERE target_id = ? ORDER BY id`,
+        )
+        .all(targetId) as EndpointRow[],
+  );
+}
+
+/** 位置の無い sighting（HAR 由来）のパラメータ。無ければ undefined */
+export function unlocatedSightingParams(
+  ctx: HasDb,
+  q: { endpointId: string; versionId: string; extractedBy: EndpointExtractor },
+): EndpointParam[] | undefined {
+  const row = dbCall(
+    () =>
+      ctx.db
+        .prepare(
+          `SELECT params FROM endpoint_sighting
+           WHERE endpoint_id = ? AND version_id = ? AND location_id IS NULL AND extracted_by = ?`,
+        )
+        .get(q.endpointId, q.versionId, q.extractedBy) as { params: string | null } | undefined,
+  );
+  return row ? ((row.params === null ? [] : JSON.parse(row.params)) as EndpointParam[]) : undefined;
+}
+
 /** 版に sighting がある GraphQL のエンドポイント（operation の無い、送信先そのもの）の origin とパス */
 export function graphqlTransports(ctx: HasDb, versionId: string): { origin: string; pathNorm: string }[] {
   return dbCall(

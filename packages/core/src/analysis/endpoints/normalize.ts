@@ -4,7 +4,9 @@
  * 規則:
  * - オリジン（scheme://host[:port]）を分ける。ホストは小文字、既定のポート（http:80・https:443・ws:80・wss:443）は落とす
  * - 先頭が式（ベース URL。"EXPR/users"・"{base}/users"・"${API}/users"）なら除く（オリジンは不明 = ''）
- * - 可変の部分を {} にする: 式（EXPR・${...}・{name}・{}）・:name・数値・UUID・16進（8 文字以上で数字を含む）のセグメント
+ * - 可変の部分を {} にする: 式（EXPR・${...}・{name}・{}）・:name・数値・UUID・16進（8 文字以上で数字を含む）・
+ *   トークン（英数字・_・- だけの 20 文字以上で、英字と数字を両方含む）・メールアドレス（@ か %40 を含む）のセグメント。
+ *   後の 2 つは HAR の観測値（import_har）で ID・トークン・個人情報をパスに残さないため
  * - クエリ文字列とフラグメントを除く（クエリのパラメータ名は別に返す。値は持たない）
  * - 空のセグメント・"."・末尾の "/" を除く。先頭 "/" の無い相対パスは "/" を補う（取得元ページのパスは使わない）
  * http(s)・ws(s) 以外のスキーム（mailto:・data:・javascript: など）は null。
@@ -31,6 +33,7 @@ const DEFAULT_PORTS: Record<string, string> = { http: '80', https: '443', ws: '8
 const EXPR_RE = /EXPR|\$\{[^}]*\}|\{[^}]*\}/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HEX_RE = /^[0-9a-f]{8,}$/i;
+const TOKEN_RE = /^[A-Za-z0-9_-]{20,}$/;
 
 export function normalizeEndpointUrl(input: string): NormalizedEndpoint | null {
   let s = input.trim();
@@ -96,6 +99,8 @@ function variableSegment(seg: string): { name: string | undefined; fallback: str
   const expr = EXPR_RE.exec(seg);
   if (expr) return { name: placeholderName(expr[0]), fallback: 'param' };
   if (/^\d+$/.test(seg) || UUID_RE.test(seg) || (HEX_RE.test(seg) && /\d/.test(seg))) return { name: undefined, fallback: 'id' };
+  if (TOKEN_RE.test(seg) && /\d/.test(seg) && /[A-Za-z]/.test(seg)) return { name: undefined, fallback: 'token' };
+  if (seg.includes('@') || /%40/i.test(seg)) return { name: undefined, fallback: 'email' };
   return undefined;
 }
 

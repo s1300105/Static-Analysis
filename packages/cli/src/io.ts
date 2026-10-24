@@ -5,6 +5,7 @@ import { isAbsolute, resolve } from 'node:path';
 import {
   type SaContext,
   type SaErrorCode,
+  SaError,
   closeContext,
   isSaError,
   openContext,
@@ -39,6 +40,18 @@ export function globals(cmd: Command): GlobalOptions {
 
 /** 繰り返し指定できるオプション（commander の引数処理） */
 export const collect = (value: string, previous: string[] | undefined): string[] => [...(previous ?? []), value];
+
+/** JSON のオブジェクトを受けるオプション（--notes など） */
+export function parseJsonObject(text: string, what: string): Record<string, unknown> {
+  let v: unknown;
+  try {
+    v = JSON.parse(text);
+  } catch (err) {
+    throw new SaError('INVALID_INPUT', `${what} must be JSON`, undefined, { cause: err });
+  }
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new SaError('INVALID_INPUT', `${what} must be a JSON object`);
+  return v as Record<string, unknown>;
+}
 
 /** コマンドラインで受けたパスはカレントディレクトリから解く */
 export function absolute(io: CliIo, p: string): string {

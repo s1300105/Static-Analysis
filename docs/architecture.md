@@ -104,7 +104,7 @@ packages/core/src/
 │  ├─ migrations/    0001_init.sql, 0002_*.sql …（番号順）
 │  └─ repo/          表ごとのリポジトリ関数（SQL はここだけ。プレースホルダ必須）
 │       target.ts  artifactVersion.ts  artifactFile.ts  codeLocation.ts
-│       analysisRun.ts  apiEndpoint.ts  candidate.ts  evidence.ts
+│       analysisRun.ts  endpoint.ts  pageContext.ts  candidate.ts  evidence.ts
 │       confirmedFact.ts  factBinding.ts  dynamicResult.ts  calibration.ts …
 ├─ store/
 │  ├─ blob.ts        content_hash による blob 保存・重複排除・読み出し
@@ -118,7 +118,7 @@ packages/core/src/
 │  ├─ paths.ts       generateWorkPath() / generateOriginalSourcePath() / assertWithinWorkspace() / writeWorkFile()（原則8）
 │  ├─ llm.ts         enforceLlmCodePolicy()（コード本文を返す出口で検査）
 │  └─ transitions.ts 状態遷移の権限表（誰がどの state 遷移を許されるか）
-├─ artifact/         load / unpack / relink / pretty / sourcemap / chunks / har
+├─ artifact/         load / unpack / relink / pretty / sourcemap / chunks / har（import_har）/ position
 ├─ intel/            resolveLocation / getFunction / findReferences / callPath
 ├─ analysis/         endpoints/（normalize・extract・babel・jsluice・sightings・list）/ diffVersions / detectStack / taintPaths / originValidation
 ├─ findings/         candidate / evidence / refutation / triage / facts / calibration / export
@@ -301,10 +301,27 @@ pretty(ctx, { fileId }): { prettyFileId: string; positionMapHash: string };     
 relinkBundle(ctx, { versionId }): { relinkedFileIds: string[]; unresolvedRequire: number };                    // ×  手順4
 indexFunctions(ctx, { versionId }): { functionCount: number; lineage: LineageStats };                          // ×  手順5/6
 findMissingChunks(ctx, { versionId }): ExpectedChunk[];                                                         // ○読 手順2
-importHar(ctx, { targetId, versionId, harPath }): HarIngestSummary;                                            // ×  手順2
+importHar(ctx, { targetId, harPath, versionId?, collectedAt?, label?, baseVersionId?, collectionNotes? })
+  : ImportHarResult;  // ingestHar は続けて unpack・sourcemap を掛ける                                           // ×  手順2
 ```
 
 `importHar` は HAR を保存せず、許可リスト項目だけ抽出する（design.md §7.1）。完了条件に「HAR を保存しないこと/値を残さないことのテスト」を含める（計画書 M2）。
+
+PR-11 での取り決め（`artifact/har.ts`・`analysis/endpoints/har.ts`）:
+- 残すもの: API の呼び出しのメソッド・パス（`normalizeEndpointUrl`。ID・UUID・16進・トークン（英数字 20 文字以上で英字と数字を含む）・
+  メールアドレス（`@`・`%40`）のセグメントは `{}`）・クエリと本文（フォーム・JSON の最上位・x-www-form-urlencoded）のパラメータ名、
+  GraphQL の operationName・種類・変数名・persisted query のハッシュ、JS / sourcemap の本文（raw 層。配信 URL はクエリを除く、
+  読み込んだ文書のオリジンは pageref の page の title か最初の文書から）、文書のセキュリティヘッダ（CSP・CSP-Report-Only・
+  X-Frame-Options・COOP・`<meta http-equiv=CSP>`。nonce と report-uri のクエリは除く。文書の URL はクエリを除きパスをテンプレート化）。
+  それ以外（ヘッダ・Cookie・値・本文）はメモリの中で読むだけで書かない。テストは目印の文字列を HAR のあらゆる場所に置き、
+  DB・blob・作業ディレクトリのどこにも現れないことを確かめる
+- 画像・CSS・フォント・メディアと CORS のプリフライトは何も残さない。2xx 以外の文書と本文の無い JS は取り込まない
+- API の照合: endpoint の path_norm の `{}` を任意の 1 セグメントとし、origin が `''`・method が `''` の endpoint はどれにも当たる。
+  origin・method が一致し固定のセグメントが多いものを採る。GraphQL の operation は名前か persisted query のハッシュで照合する。
+  当たらない呼び出しは HAR にしか無い endpoint として作る（名前の無い persisted query の operation は `sha256:<hash>`）。
+  sighting は endpoint ごとに 1 つ（位置なし）で、同じ版の前回の HAR のパラメータと足し合わせる。照合は取り込む時点の endpoint に対して
+  行うので、`sa extract-endpoints` を先に掛ける
+- 版を新しく作るときの取得日時は、省けば HAR の最初の記録（page か entry）の日時。analysis_run は kind=ingest・tool=import_har
 
 手順1 の実装上の取り決め（PR-4）:
 - `loadArtifact` はファイルごとに配信 URL・読み込み元オリジン・帰属・チャンクキーを受ける（`LoadArtifactFile`。zod スキーマは `@sa/types`）。
@@ -428,7 +445,7 @@ sa-core の関数に 1:1 で薄く割り当てる。`caller='cli'`。判定・�
 | コマンド | 呼ぶ関数 | 手順 |
 |---|---|---|
 | `sa target add` / `list` / `show` / `set-scope` | createTarget / listTargets / describeTarget / updateTargetScope（scope・llm_code_policy） | 1 |
-| `sa load`（取り込み → unpack → sourcemap）/ `sa import-har` | ingestArtifacts（loadArtifact → unpackBundle → importSourcemap）/ importHar | 1/2 |
+| `sa load`（取り込み → unpack → sourcemap）/ `sa import-har` | ingestArtifacts（loadArtifact → unpackBundle → importSourcemap）/ ingestHar（importHar → 同じ流れ） | 1/2 |
 | `sa extract-endpoints` / `sa endpoints` / `sa diff` / `sa export-endpoints` / `sa triage-endpoint` | extractEndpoints / listEndpoints / diffVersions / exportEndpoints / endpoint triage | 2 |
 | `sa analyze`（detect-stack→relink→taint→triage の一括 or 個別） | detectStack / relinkBundle / taintPaths / applyTriage | 4 |
 | `sa plan` | exportTestPlan | 5 |

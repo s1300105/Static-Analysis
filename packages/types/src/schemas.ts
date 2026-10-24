@@ -75,6 +75,24 @@ export const LoadArtifactInputSchema = z
 export type LoadArtifactFile = z.input<typeof LoadArtifactFileSchema>;
 export type LoadArtifactInput = z.input<typeof LoadArtifactInputSchema>;
 
+/**
+ * import_har の入力（design.md §7.1）。HAR は保存せず、許可リストの項目だけを抜く。
+ * versionId を渡せば既存の版に足す。版を新しく作るときの collectedAt は省けば HAR の最初の記録の日時
+ */
+export const ImportHarInputSchema = z
+  .object({
+    targetId: z.string().min(1),
+    harPath: z.string().min(1),
+    versionId: z.string().min(1).optional(),
+    baseVersionId: z.string().min(1).optional(),
+    label: z.string().min(1).optional(),
+    collectedAt: z.string().datetime({ offset: true }).optional(),
+    collectionNotes: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
+export type ImportHarInput = z.input<typeof ImportHarInputSchema>;
+
 const PositiveInt = z.number().int().positive();
 
 /** 外部ツール 1 つの指定。path は絶対パスか設定ファイルからの相対。version は analysis_run.tool_version に残す */
