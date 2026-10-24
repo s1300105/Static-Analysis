@@ -1,0 +1,127 @@
+/**
+ * ドメイン語彙。design.md §3.1 と §6 を単一の出所にする。
+ * 各語彙は `as const` のタプルで持ち、そこから union 型を導く（実行時に反復・検証できるようにするため）。
+ */
+
+// --- 脆弱性クラス（design.md §3.1） ---
+export const VULN_CLASSES = [
+  'dom_xss',
+  'postmessage_recv',
+  'postmessage_send',
+  'proto_pollution',
+  'pp_gadget',
+  'chain_pp_xss',
+  'chain_msg_storage_xss',
+] as const;
+export type VulnClass = (typeof VULN_CLASSES)[number];
+
+// --- source 種別（design.md §3.1） ---
+export const SOURCE_KINDS = [
+  'hash',
+  'search',
+  'href',
+  'referrer',
+  'window_name',
+  'cookie',
+  'storage',
+  'api_response',
+  'message_data',
+  'secret_value',
+  'polluted_prop',
+] as const;
+export type SourceKind = (typeof SOURCE_KINDS)[number];
+
+// client_entry.kind: SOURCE_KINDS のうちクライアント入口に当たる部分集合（design.md §6.2）
+export const CLIENT_ENTRY_KINDS = [
+  'hash',
+  'search',
+  'href',
+  'referrer',
+  'window_name',
+  'storage',
+  'message_data',
+  'api_response',
+] as const;
+export type ClientEntryKind = (typeof CLIENT_ENTRY_KINDS)[number];
+
+// --- 防御状態（design.md §3.1。有効な防御は候補にならないので値に含めない） ---
+export const DEFENSE_STATES = ['none', 'weak', 'unknown'] as const;
+export type DefenseState = (typeof DEFENSE_STATES)[number];
+
+// --- 成果物の層（design.md §6.6） ---
+export const LAYERS = ['raw', 'unpacked', 'relinked', 'pretty', 'original', 'renamed'] as const;
+export type Layer = (typeof LAYERS)[number];
+
+// --- バンドラ（unpack_bundle が記録。design.md §6.1） ---
+export const BUNDLERS = ['webpack', 'browserify', 'turbopack', 'esm', 'unknown'] as const;
+export type Bundler = (typeof BUNDLERS)[number];
+
+// --- API プロトコル（design.md §6.2） ---
+export const PROTOCOLS = ['rest', 'graphql', 'websocket'] as const;
+export type Protocol = (typeof PROTOCOLS)[number];
+
+// --- 候補の状態（3軸。design.md §6.3） ---
+export const PIPELINE_STATES = ['new', 'refuted', 'suppressed', 'needs_human', 'closed'] as const;
+export type PipelineState = (typeof PIPELINE_STATES)[number];
+
+export const VERDICTS = ['unverified', 'real', 'false', 'inconclusive'] as const;
+export type Verdict = (typeof VERDICTS)[number];
+
+// report_state は外部の信号で増えうるので固定の union にはせず string 扱い。代表値だけ定数で置く。
+export const REPORT_STATES = [
+  'none',
+  'reported',
+  'accepted',
+  'duplicate_by_program',
+  'informative',
+  'wontfix',
+] as const;
+export type ReportState = (typeof REPORT_STATES)[number] | (string & {});
+
+// --- 関数同一性の対応種別（design.md §6.1） ---
+export const MATCH_KINDS = ['exact', 'fuzzy', 'sourcemap', 'ambiguous'] as const;
+export type MatchKind = (typeof MATCH_KINDS)[number];
+
+// --- LLM 送信可否ポリシー（design.md §7.2。未設定は deny 扱い） ---
+export const LLM_CODE_POLICIES = ['deny', 'no_original', 'allow'] as const;
+export type LlmCodePolicy = (typeof LLM_CODE_POLICIES)[number];
+
+// --- 確定事実の種別と極性（design.md §6.4） ---
+export const EXPAND_FACT_TYPES = [
+  'tainted_source',
+  'fake_sanitizer',
+  'reachable',
+  'weak_origin_check',
+] as const;
+export const SUPPRESS_FACT_TYPES = ['effective_sanitizer', 'unreachable', 'not_controllable'] as const;
+export const FACT_TYPES = [...EXPAND_FACT_TYPES, ...SUPPRESS_FACT_TYPES] as const;
+export type FactType = (typeof FACT_TYPES)[number];
+
+export const POLARITIES = ['expand', 'suppress'] as const;
+export type Polarity = (typeof POLARITIES)[number];
+
+export interface FactMeta {
+  /** 候補を広げる側か、消す側か */
+  readonly polarity: Polarity;
+  /** サーバ挙動に依存する事実は valid_until（TTL）必須（design.md §6.4） */
+  readonly serverDependent: boolean;
+}
+
+/**
+ * fact_type -> polarity・サーバ依存の対応表（design.md §6.4）。
+ * DB にマスタ表は作らず、ここをコードの単一定義にする。confirm_fact は polarity をここから自動設定する。
+ */
+export const FACT_META: Record<FactType, FactMeta> = {
+  tainted_source: { polarity: 'expand', serverDependent: true },
+  fake_sanitizer: { polarity: 'expand', serverDependent: false },
+  reachable: { polarity: 'expand', serverDependent: false },
+  weak_origin_check: { polarity: 'expand', serverDependent: false },
+  effective_sanitizer: { polarity: 'suppress', serverDependent: false },
+  // unreachable の TTL は種別ごとに判断（design.md §6.4）。既定では必須にしない
+  unreachable: { polarity: 'suppress', serverDependent: false },
+  not_controllable: { polarity: 'suppress', serverDependent: true },
+};
+
+export function polarityOf(factType: FactType): Polarity {
+  return FACT_META[factType].polarity;
+}

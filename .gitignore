@@ -1,0 +1,22 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# test
+coverage/
+
+# editor / OS
+.DS_Store
+*.log
+
+# runtime data (never commit target artifacts or the analysis DB)
+blobs/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+workspace/
+*.bak
