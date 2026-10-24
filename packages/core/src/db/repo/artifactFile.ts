@@ -137,6 +137,17 @@ export function listArtifactFiles(
   return rows.map(toArtifactFile);
 }
 
+/** 版のファイル数を層ごとに数える */
+export function countArtifactFilesByLayer(ctx: HasDb, versionId: string): Partial<Record<Layer, number>> {
+  const rows = dbCall(
+    () =>
+      ctx.db
+        .prepare('SELECT layer, count(*) AS n FROM artifact_file WHERE version_id = ? GROUP BY layer')
+        .all(versionId) as { layer: Layer; n: number }[],
+  );
+  return Object.fromEntries(rows.map((r) => [r.layer, r.n]));
+}
+
 /** 版の中で同じ層・同じ中身のファイル（取り込みの重複排除に使う） */
 export function findArtifactFileByHash(
   ctx: HasDb,

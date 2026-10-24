@@ -34,7 +34,25 @@ export function insertTarget(ctx: HasDb, t: { name: string; scope?: TargetScopeI
 
 export function getTarget(ctx: HasDb, id: string): Target | undefined {
   const row = dbCall(() => ctx.db.prepare('SELECT * FROM target WHERE id = ?').get(id) as TargetDbRow | undefined);
-  if (!row) return undefined;
+  return row && toTarget(row);
+}
+
+export function listTargets(ctx: HasDb): Target[] {
+  const rows = dbCall(() => ctx.db.prepare('SELECT * FROM target ORDER BY id').all() as TargetDbRow[]);
+  return rows.map(toTarget);
+}
+
+export function findTargetsByName(ctx: HasDb, name: string): Target[] {
+  const rows = dbCall(() => ctx.db.prepare('SELECT * FROM target WHERE name = ? ORDER BY id').all(name) as TargetDbRow[]);
+  return rows.map(toTarget);
+}
+
+/** scope を丸ごと置き換える（検証済みの値を渡す。CLI 専用の操作かどうかの検査は呼び出し側） */
+export function setTargetScope(ctx: HasDb, id: string, scope: TargetScope): void {
+  dbCall(() => ctx.db.prepare('UPDATE target SET scope = ? WHERE id = ?').run(JSON.stringify(scope), id));
+}
+
+function toTarget(row: TargetDbRow): Target {
   return {
     id: row.id,
     name: row.name,

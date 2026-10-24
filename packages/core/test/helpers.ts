@@ -1,18 +1,17 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach } from 'vitest';
 import {
-  DEFAULT_CONFIG,
   type Database,
   type OpenDatabaseOptions,
   type SaConfig,
   type SaContext,
-  migrate,
-  openBlobStore,
+  closeContext,
+  configForHome,
+  openContext,
   openDatabase,
 } from '@sa/core';
-import { createJobRunner } from '../src/jobs/runner';
 
 /** テストごとの一時ディレクトリ。afterEach で消す */
 export function useTmpDir(): () => string {
@@ -50,22 +49,16 @@ export function catchError(fn: () => unknown): unknown {
   throw new Error('expected an error');
 }
 
-/** 一時ディレクトリに DB（移行済み）・blob ストア・作業ディレクトリを持つ SaContext を作る。afterEach で閉じて消す */
+/** 一時ディレクトリを home にして openContext する（caller は cli）。afterEach で閉じて消す */
 export function useContext(): (config?: Partial<SaConfig>) => SaContext {
   const tmp = useTmpDir();
-  const openDb = useDatabases();
+  const contexts: SaContext[] = [];
+  afterEach(() => {
+    for (const ctx of contexts.splice(0)) closeContext(ctx);
+  });
   return (config = {}) => {
-    const dir = tmp();
-    const db = openDb(join(dir, 'sa.db'));
-    migrate(db);
-    const workspaceDir = join(dir, 'workspace');
-    mkdirSync(workspaceDir);
-    return {
-      db,
-      store: openBlobStore(join(dir, 'blobs')),
-      jobs: createJobRunner({ maxWorkers: 2 }),
-      config: { ...DEFAULT_CONFIG, workspaceDir, ...config },
-      caller: 'cli',
-    };
+    const ctx = openContext({ config: { ...configForHome(tmp()), ...config }, caller: 'cli' });
+    contexts.push(ctx);
+    return ctx;
   };
 }

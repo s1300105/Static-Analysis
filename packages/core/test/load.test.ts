@@ -43,7 +43,7 @@ describe('loadArtifact', () => {
       targetId,
       label: 'v1',
       baseVersionId: null,
-      collectedAt: T0,
+      collectedAt: '2026-10-01T09:00:00.000Z',
       collectionNotes: { loggedIn: true, role: 'user' },
     });
 
@@ -98,7 +98,7 @@ describe('loadArtifact', () => {
       baseVersionId: v1.versionId,
       files: [{ path: fixture('lazy.ce3f5b37.js') }],
     });
-    expect(getArtifactVersion(ctx, v2.versionId)?.baseVersionId).toBe(v1.versionId);
+    expect(getArtifactVersion(ctx, v2.versionId)).toMatchObject({ baseVersionId: v1.versionId, collectedAt: '2026-10-08T00:00:00.000Z' });
     // 版をまたいでも blob は 1 つ
     expect(getArtifactFile(ctx, v2.fileIds[0]!)?.contentHash).toBe(getArtifactFile(ctx, v1.fileIds[0]!)?.contentHash);
   });

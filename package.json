@@ -16,7 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "depcruise": "depcruise packages --config .dependency-cruiser.cjs",
-    "smoke": "node packages/core/scripts/smoke-dist.mjs",
+    "smoke": "node packages/cli/scripts/smoke.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm smoke && pnpm depcruise"
   },
   "pnpm": {

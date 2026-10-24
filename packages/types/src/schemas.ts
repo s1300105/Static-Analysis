@@ -13,12 +13,12 @@ export const ThirdPartyCodeSchema = z.enum(['in_scope', 'out_of_scope', 'report_
 /** target.scope: 許可ドメイン・対象外・プログラム規約メモ・LLM 送信可否（design.md §6.1） */
 export const TargetScopeSchema = z
   .object({
-    allowed_domains: z.array(z.string()).default([]),
-    out_of_scope: z.array(z.string()).default([]),
+    allowed_domains: z.array(z.string().min(1)).default([]),
+    out_of_scope: z.array(z.string().min(1)).default([]),
     llm_code_policy: LlmCodePolicySchema,
-    /** llm_code_policy の確認日と URL（design.md §6.1） */
-    llm_code_policy_confirmed_at: z.string().optional(),
-    llm_code_policy_source_url: z.string().optional(),
+    /** llm_code_policy の確認日（日付か日時）と根拠の URL（プログラム規約のページ）（design.md §6.1） */
+    llm_code_policy_confirmed_at: z.union([z.string().date(), z.string().datetime({ offset: true })]).optional(),
+    llm_code_policy_source_url: z.string().url().optional(),
     third_party_code: ThirdPartyCodeSchema.optional(),
     notes: z.string().optional(),
   })
@@ -64,3 +64,31 @@ export const LoadArtifactInputSchema = z
 
 export type LoadArtifactFile = z.input<typeof LoadArtifactFileSchema>;
 export type LoadArtifactInput = z.input<typeof LoadArtifactInputSchema>;
+
+const PositiveInt = z.number().int().positive();
+
+/**
+ * 設定ファイル（<home>/config.json）の形（docs/architecture.md §3.5）。すべて省略でき、省いた項目は既定値。
+ * パスは設定ファイルの場所からの相対でもよい。
+ */
+export const SaConfigFileSchema = z
+  .object({
+    /** SQLite の DB ファイル。既定 <home>/sa.db */
+    dbPath: z.string().min(1).optional(),
+    /** blob ストア。既定 <home>/blobs */
+    blobDir: z.string().min(1).optional(),
+    /** 作業ディレクトリ（ツールが生成するパスはすべてこの下）。既定 <home>/workspace */
+    workspaceDir: z.string().min(1).optional(),
+    busyTimeoutMs: z.number().int().nonnegative().optional(),
+    maxWorkers: PositiveInt.optional(),
+    maxChildren: PositiveInt.optional(),
+    workerLimits: z
+      .object({ maxOldGenMb: PositiveInt.optional(), stackSizeMb: PositiveInt.optional(), timeoutMs: PositiveInt.optional() })
+      .strict()
+      .optional(),
+    /** sourcemap の簡易検証の一致率の閾値（0〜1） */
+    mapCheckThreshold: z.number().min(0).max(1).optional(),
+  })
+  .strict();
+
+export type SaConfigFile = z.infer<typeof SaConfigFileSchema>;

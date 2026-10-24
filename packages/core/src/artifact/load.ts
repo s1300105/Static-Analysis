@@ -63,7 +63,8 @@ export function loadArtifact(ctx: SaContext, input: LoadArtifactInput): LoadArti
       req.versionId ??
       insertArtifactVersion(ctx, {
         targetId: req.targetId,
-        collectedAt: req.collectedAt!,
+        // 時刻は UTC にそろえて持つ（design.md §6。並べ替えを文字列比較でできるように）
+        collectedAt: new Date(req.collectedAt!).toISOString(),
         ...(req.label !== undefined && { label: req.label }),
         ...(req.baseVersionId !== undefined && { baseVersionId: req.baseVersionId }),
         ...(req.collectionNotes !== undefined && { collectionNotes: req.collectionNotes }),

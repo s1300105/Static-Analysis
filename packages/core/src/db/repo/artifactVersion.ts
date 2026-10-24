@@ -61,7 +61,21 @@ export function getArtifactVersion(ctx: HasDb, id: string): ArtifactVersion | un
   const row = dbCall(
     () => ctx.db.prepare('SELECT * FROM artifact_version WHERE id = ?').get(id) as ArtifactVersionDbRow | undefined,
   );
-  if (!row) return undefined;
+  return row && toArtifactVersion(row);
+}
+
+/** 対象の版を取得日時の順に返す */
+export function listArtifactVersions(ctx: HasDb, targetId: string): ArtifactVersion[] {
+  const rows = dbCall(
+    () =>
+      ctx.db
+        .prepare('SELECT * FROM artifact_version WHERE target_id = ? ORDER BY collected_at, id')
+        .all(targetId) as ArtifactVersionDbRow[],
+  );
+  return rows.map(toArtifactVersion);
+}
+
+function toArtifactVersion(row: ArtifactVersionDbRow): ArtifactVersion {
   return {
     id: row.id,
     targetId: row.target_id,
