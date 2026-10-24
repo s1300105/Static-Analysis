@@ -1,0 +1,42 @@
+# sa を LLM と一緒に動かすときの構成（design.md §9「隔離と外向き通信」、docs/plan.md D4）。
+#
+#   internal: 外へ出る経路の無いネットワーク（internal: true）。sa はここにだけ繋がる
+#   egress  : 外へ出られるネットワーク。繋がるのは egress-proxy だけ
+#
+# sa から外へは egress-proxy 経由でしか出られず、プロキシは api.anthropic.com:443 だけを通す。
+# プロキシの設定を無視するプログラムがあっても、ネットワークに経路が無いので出られない（境界はネットワーク層）。
+# LLM を使わない解析（いまの sa load など）は、これを使わずに docker run --network none で動かす（docker/README.md）。
+name: sa
+
+services:
+  egress-proxy:
+    build:
+      context: ..
+      dockerfile: docker/egress-proxy/Dockerfile
+    image: sa-egress-proxy:local
+    networks: [internal, egress]
+    restart: unless-stopped
+
+  sa:
+    build:
+      context: ..
+      dockerfile: docker/sa/Dockerfile
+    image: sa:local
+    networks: [internal]
+    depends_on: [egress-proxy]
+    environment:
+      HTTPS_PROXY: http://egress-proxy:3128
+      HTTP_PROXY: http://egress-proxy:3128
+      https_proxy: http://egress-proxy:3128
+      http_proxy: http://egress-proxy:3128
+    volumes:
+      - sa-data:/data
+      - ${SA_INPUT_DIR:-./in}:/in:ro
+
+networks:
+  internal:
+    internal: true
+  egress: {}
+
+volumes:
+  sa-data: {}

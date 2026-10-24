@@ -20,13 +20,35 @@ Bug Bounty 向けの静的解析 AI エージェント＋MCP サーバ。**タ�
 
 依存は一方向（`@sa/types ← @sa/core ← {@sa/cli, @sa/mcp}`）で、`pnpm depcruise` が CI で検査する。
 
+## 使い方（いまできること）
+
+```bash
+pnpm install && pnpm build
+alias sa="node $(pwd)/packages/cli/dist/cli.js"
+
+# 対象を作る（llm_code_policy の既定は deny。deny 以外にするには規約の確認日と URL が要る）
+sa target add example --allow example.com --allow api.example.com
+sa target set-scope example --llm-code-policy no_original \
+  --policy-confirmed-at 2026-10-20 --policy-source https://hackerone.com/example/policy
+
+# 取得した JS・sourcemap を取り込む（raw 層 → unpack → sourcemap の簡易検証と original 層）
+sa load example dist/*.js dist/*.map --collected-at now --label v1
+sa target show example
+
+# DB のスナップショット（blob ストアは別に保管する）
+sa backup ~/sa-backup-$(date +%F).db
+```
+
+データは `--home`（既定 `$SA_HOME` か `~/.sa`）の下に置く: `sa.db`・`blobs/`・`workspace/`。設定は `<home>/config.json`（任意）。
+`--json` を付けると結果を JSON で出す。
+
 ## 開発
 
 要件: Node.js >= 22、pnpm。
 
 ```bash
 pnpm install
-pnpm check      # lint + typecheck + test + build + depcruise
+pnpm check      # lint + typecheck + test + build + smoke + depcruise
 ```
 
 個別:
@@ -36,5 +58,8 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm smoke      # ビルド後の dist で取り込み → unpack → sourcemap を一通り動かす（worker の dist 解決の確認）
 pnpm depcruise
 ```
+
+テストは worker（`packages/core/src/jobs/workers/*.worker.ts`）を Node の型除去で直接読むので、Node 22.18 以降が要る。

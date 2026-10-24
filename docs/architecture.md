@@ -94,7 +94,8 @@
 
 ```
 packages/core/src/
-├─ context.ts        SaContext の生成（DB 接続・設定・store・jobRunner・logger を束ねる）
+├─ context.ts        SaContext / SaConfig の型と既定値（生成の openContext は PR-5）
+├─ validate.ts       入口の値を @sa/types の zod スキーマで検証して SaError('INVALID_INPUT') にそろえる
 ├─ errors.ts         SaError 階層（コード付き。握りつぶさない）
 ├─ ids.ts            ulid() ラッパ、nowIso()
 ├─ db/
@@ -109,10 +110,11 @@ packages/core/src/
 │  ├─ blob.ts        content_hash による blob 保存・重複排除・読み出し
 │  └─ backup.ts      VACUUM INTO / .backup
 ├─ jobs/
-│  ├─ runner.ts      JobRunner: runWorker() / runChild()（上限・タイムアウト・スキップ記録）
-│  └─ workers/       babel.worker.ts など（worker_threads のエントリ）
+│  ├─ runner.ts      JobRunner: runWorker() / runChild()（上限・タイムアウト）
+│  ├─ skips.ts       SkipLog（理由別のスキップ記録 → analysis_run.skipped_detail）
+│  └─ workers/       unpack.worker.ts / sourcemap.worker.ts（worker_threads のエントリ。index.ts が src/dist の置き場所を解決）
 ├─ policy/
-│  ├─ paths.ts       generateWorkPath() / assertWithinWorkspace()（原則8）
+│  ├─ paths.ts       generateWorkPath() / generateOriginalSourcePath() / assertWithinWorkspace() / writeWorkFile()（原則8）
 │  ├─ llm.ts         enforceLlmCodePolicy()（コード本文を返す出口で検査）
 │  └─ transitions.ts 状態遷移の権限表（誰がどの state 遷移を許されるか）
 ├─ artifact/         load / unpack / relink / pretty / sourcemap / chunks / har
@@ -187,21 +189,38 @@ export interface JobRunner {
   runChild(spec: ChildSpec): Promise<JobResult<ChildOutput>>;
 }
 export interface WorkerLimits { maxOldGenMb: number; stackSizeMb: number; timeoutMs: number; }
-export interface ChildSpec { bin: string; args: string[]; cwd: string; env: Record<string,string>; timeoutMs: number; }
+export interface ChildSpec {
+  bin: string; args: string[]; cwd: string; env: Record<string,string>; timeoutMs: number;
+  okExitCodes?: number[]; maxOutputBytes?: number;
+}
 export type JobResult<O> =
   | { ok: true; value: O; durationMs: number }
-  | { ok: false; reason: SkipReason; detail: string };   // 呼び出し側が analysis_run に記録
-export type SkipReason =
-  | 'parse_failed' | 'timeout' | 'oom' | 'extraction_error' | 'unresolved_require' | 'minified_excluded' | 'tool_error';
+  | { ok: false; reason: SkipReason; detail: string; durationMs: number };   // 呼び出し側が SkipLog に積み analysis_run に記録
+// SkipReason / SkippedDetail は採点（@sa/eval）も読むので @sa/types に置く（SKIP_REASONS）:
+//   parse_failed / timeout / oom / tool_error / extraction_error / unresolved_require / minified_excluded / path_excluded / unmapped
 ```
 
 - worker は `worker_threads`、`resourceLimits`（`maxOldGenerationSizeMb` 等）＋`stackSizeMb`（例 64）。
-- 子プロセスはタイムアウトで `SIGKILL`。stdout/stderr を捕捉。exit code と errors JSON を解釈してスキップに写す。
-- 中間結果（AST など）は content_hash をキーにディスクにキャッシュし、再起動後に作り直さない。
+  `WorkerSpec` は「入力を受けて結果を返す関数を default export する ES モジュール」の file: URL。起動コードは文字列（eval）で持ち、src と dist で置き場所を変えない。
+  スキップ理由を指定して失敗させるときは worker 内で `JobSkipError` を投げる。worker には親の環境変数を渡さない（衛生のため。同一プロセスなので境界ではない）。
+- 子プロセスは新しいプロセスグループで起動し、タイムアウトでグループごと `SIGKILL`（CodeQL の java など孫まで止める）。終了後に残った孫も止める。
+  env は明示したものだけ（親の環境を引き継がない）、`bin` と `cwd` は絶対パス。stdout/stderr を上限付きで捕捉。
+  exit code は `okExitCodes` で判定し、ツール固有の errors JSON の解釈は呼び出し側でスキップに写す。
+- 同時実行数は worker・子プロセスそれぞれ上限を持ち、タイムアウトは実行枠を得てから数える。
+- 失敗・タイムアウトは throw せず `JobResult` で返す（throw は引数の誤りだけ）。`SkipLog`（`jobs/skips.ts`）に積み、
+  `finishAnalysisRun`（`db/repo/analysisRun.ts`）で `files_skipped` と `skipped_detail` に書く。明細は理由ごとに上限件まで、総数は必ず残す。
+- 中間結果（AST など）は content_hash をキーにディスクにキャッシュし、再起動後に作り直さない（worker を使う最初の PR で入れる）。
 
 ### 3.5 設定（`SaConfig`）
 
 環境変数と設定ファイルから作る。解析ツールのパス・上限・タイムアウト・workspace 位置を集約。CodeQL 向けの固定環境変数（`CODEQL_EXTRACTOR_JAVASCRIPT_ALLOW_MINIFIED_FILES=true` 等。design.md §6.6）もここで持ち、子プロセス env に注入する。
+
+PR-5 で入れたもの（`config.ts`・`context.ts`）:
+- home（データの置き場所）は 引数 > `SA_HOME` > `~/.sa`。既定の配置は `<home>/sa.db`・`<home>/blobs`・`<home>/workspace`。
+- 設定ファイルは 引数 > `SA_CONFIG` > `<home>/config.json`（無ければ既定値だけ）。形は `@sa/types` の `SaConfigFileSchema`
+  （`dbPath`・`blobDir`・`workspaceDir`・`busyTimeoutMs`・`maxWorkers`・`maxChildren`・`workerLimits`・`mapCheckThreshold`）。パスは設定ファイルからの相対でもよい。
+- `openContext({ config, caller })` はディレクトリを無ければ 0700 で作り、DB を開いて移行し、blob ストアとジョブ実行器を用意する。`closeContext` で閉じる。
+- 解析ツールのパスと CodeQL の固定環境変数は、それを使う PR（M2 の jsluice、M4 の CodeQL）で足す。
 
 ### 3.6 状態遷移の権限（`policy/transitions.ts`）
 
@@ -269,9 +288,12 @@ design.md §7 のツール表を、sa-core の関数シグネチャに落とす�
 ### 5.1 Artifact（`artifact/`）
 
 ```ts
-loadArtifact(ctx, { paths, targetId, versionId?, baseVersionId? }): { versionId: string; fileIds: string[] };  // ×  手順1
-importSourcemap(ctx, { versionId, mapFileId }): { originalFileIds: string[]; mapCheck: MapCheck };             // ×  手順1
-unpackBundle(ctx, { versionId }): { bundler: Bundler; moduleCount: number; unmappedCount: number };            // ×  手順1
+loadArtifact(ctx, { targetId, files: LoadArtifactFile[], versionId?, baseVersionId?, label?, collectedAt?, collectionNotes? })
+  : { versionId; createdVersion; fileIds; added };                                                              // ×  手順1
+importSourcemap(ctx, { versionId, mapFileId, generatedFileId? })
+  : Promise<{ runId?; generatedFileId; mapCheck: MapCheck | null; accepted; originalFileIds }>;                  // ×  手順1
+unpackBundle(ctx, { versionId, retryFailed? })
+  : Promise<{ runId; files; moduleCount; bundlers: Record<Bundler, number>; noBoundaryCount; skipped }>;        // ×  手順1
 pretty(ctx, { fileId }): { prettyFileId: string; positionMapHash: string };                                    // ×  手順3
 relinkBundle(ctx, { versionId }): { relinkedFileIds: string[]; unresolvedRequire: number };                    // ×  手順4
 indexFunctions(ctx, { versionId }): { functionCount: number; lineage: LineageStats };                          // ×  手順5/6
@@ -280,6 +302,19 @@ importHar(ctx, { targetId, versionId, harPath }): HarIngestSummary;             
 ```
 
 `importHar` は HAR を保存せず、許可リスト項目だけ抽出する（design.md §7.1）。完了条件に「HAR を保存しないこと/値を残さないことのテスト」を含める（計画書 M2）。
+
+手順1 の実装上の取り決め（PR-4）:
+- `loadArtifact` はファイルごとに配信 URL・読み込み元オリジン・帰属・チャンクキーを受ける（`LoadArtifactFile`。zod スキーマは `@sa/types`）。
+  版の中で同じ中身は 1 行にまとめて観測を足し合わせる。HAR（拡張子か `{"log":` で始まる中身）は拒否する。パースはしない。
+- `unpackBundle` は webpack 5 の production 出力（チャンクの `webpackChunk*.push` とランタイムのモジュールマップ）を認識し、
+  ファクトリ本体を raw の部分範囲として切り出す。モジュール ID は unpacked の `orig_name`、push のチャンク ID は raw の `chunk_key`（未設定なら）に入れる。
+  認識できない形式と ESM はファイル全体を 1 つの unpacked にし、認識できなかったものは `no_module_boundary` として記録する。
+  Babel の位置（UTF-16）はバイト位置に変換してから返す（BOM も 1 文字として残す）。まだ unpack していない raw だけを処理するので、版にファイルを足したら掛け直せばよい。
+- `importSourcemap` の簡易検証は、生成側を「識別子の先頭か」で近似し、元側は「その位置か同じ行のそれ以降に names[i] が識別子として現れるか」で数える
+  （webpack の map は元側の位置を文の先頭に丸めるため）。閾値の既定は 0.7（fixture で正しい map 0.83〜1.0、別ビルド・別チャンク 0.01〜0.25。design.md §13 で決め直す）。
+  生成元は sourceMappingURL、次に `<name>.map` ↔ `<name>` で探し、決まらなければ `generatedFileId` を求める。
+- worker のモジュール（`jobs/workers/*.worker.ts`）は相対 import をせず（型だけは可）、消せる型構文だけを使う。
+  テストでは Node の型除去でソースを、ビルド後は `dist/workers/<name>.js` を読む。後者は CI の `pnpm smoke` で確かめる。
 
 ### 5.2 Code intel（`intel/`）
 
@@ -350,8 +385,8 @@ sa-core の関数に 1:1 で薄く割り当てる。`caller='cli'`。判定・�
 
 | コマンド | 呼ぶ関数 | 手順 |
 |---|---|---|
-| `sa target` / `sa target set-scope` | target repo（scope・llm_code_policy） | 1 |
-| `sa load` / `sa import-har` / `sa import-sourcemap` | loadArtifact / importHar / importSourcemap | 1/2 |
+| `sa target add` / `list` / `show` / `set-scope` | createTarget / listTargets / describeTarget / updateTargetScope（scope・llm_code_policy） | 1 |
+| `sa load`（取り込み → unpack → sourcemap）/ `sa import-har` | ingestArtifacts（loadArtifact → unpackBundle → importSourcemap）/ importHar | 1/2 |
 | `sa extract-endpoints` / `sa diff` / `sa export-endpoints` / `sa triage-endpoint` | extractEndpoints / diffVersions / exportEndpoints / endpoint triage | 2 |
 | `sa analyze`（detect-stack→relink→taint→triage の一括 or 個別） | detectStack / relinkBundle / taintPaths / applyTriage | 4 |
 | `sa plan` | exportTestPlan | 5 |
@@ -359,10 +394,21 @@ sa-core の関数に 1:1 で薄く割り当てる。`caller='cli'`。判定・�
 | `sa fact revoke` / `sa verdict` / `sa submission` / `sa report-draft` | revokeFact / setVerdict / recordSubmission / exportReportDraft | 5/6 |
 | `sa calibrate` | recomputeCalibration | 6 |
 | `sa rule activate` | promoteToRule の有効化 | 7 |
-| `sa backup` / `sa purge-target` | store/backup | 1 |
+| `sa backup` | backupDatabase → verifyBackup | 1 |
+| `sa purge-target` | （手順は design.md §13 で未決。決まってから） | — |
 | `sa score <suite>` | @sa/eval の採点（LLM 無し） | 0'〜 |
 
 出力は人間が読む/記入する形式（表・Markdown＋YAML）。`sa ingest` は `export_test_plan` が出したファイルの判定欄を読み、sa-core の同じ検証を通す（design.md §8）。
+
+PR-5 での取り決め:
+- 共通オプション: `--home <dir>`（既定 `$SA_HOME` か `~/.sa`）、`--config <file>`、`--json`（結果を JSON で出す）。
+- `run(argv, io)` が入口。標準出力・環境変数・カレントディレクトリを `io` で受け取り、終了コードを返す（テストはプロセス内で回す）。
+  終了コード: 成功 0、`INVALID_INPUT` 2、`NOT_FOUND` 3、`POLICY_DENIED` 4、その他 1。commander の使い方の誤りは commander の終了コード。
+- 対象は ID か名前で指定できる（名前は一意。ID の形の名前は作れない）。
+- `target.scope` の `llm_code_policy` を deny 以外にするには、規約を確認した日（`--policy-confirmed-at`）と規約ページの URL（`--policy-source`）が要る。
+- `sa load` はファイルを位置引数か `--manifest`（`LoadArtifactFile` の JSON 配列。配信 URL 等を持てる）で受ける。新しい版には `--collected-at`（ISO 8601 か `now`）が要る。
+  生成元が決まらない sourcemap はその map だけ取り込まずに続け、理由を表示する。
+- ビルド後の `sa` を実際に起動して一通り動かす `pnpm smoke` を CI で回す。
 
 ### 6.2 `@sa/mcp`（sa-mcp サーバ）
 
@@ -439,6 +485,8 @@ design.md §6.6 の規約を実装規則として固定する。
 4. **PR-4 取り込みと層（最小）**: `loadArtifact`、`unpackBundle`（webpack 5 production 1 種）、`importSourcemap`、unpacked 往復テスト。
 5. **PR-5 CLI 骨格**: `sa target` / `sa load`、`openContext`/`closeContext`、設定読み込み。
 6. **PR-6 実行イメージ**: `docker/`（jsluice・CodeQL・Semgrep の版固定、egress 制限）と D4 の確認。
+   → D4 は既定案で決定。LLM を使わない解析は `docker run --network none`、LLM を使うときは内部ネットワーク（`internal: true`）＋
+   `api.anthropic.com:443` だけを通す squid（`docker/compose.yaml`）。確認は `docker/verify.sh`（CI: `.github/workflows/docker.yml`）。
 
 並行して `@sa/eval` 側で M0（E1 採点基盤）を進められる（計画書 §3 の依存関係）。
 以降は計画書のマイルストーン（M2 以降）に従い、本文書の §5 のシグネチャを実装していく。

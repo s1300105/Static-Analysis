@@ -1,20 +1,187 @@
-import { describe, expect, it } from 'vitest';
-import { CLI_VERSION, buildProgram } from '@sa/cli';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { CLI_VERSION, run } from '@sa/cli';
 
-describe('sa cli', () => {
-  it('reports its version', async () => {
-    const program = buildProgram().exitOverride();
-    program.configureOutput({ writeOut: () => {}, writeErr: () => {} });
-    await expect(program.parseAsync(['node', 'sa', '--version'])).rejects.toMatchObject({
-      code: 'commander.version',
+const dirs: string[] = [];
+afterEach(() => {
+  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+});
+function tmp(): string {
+  const d = mkdtempSync(join(tmpdir(), 'sa-cli-test-'));
+  dirs.push(d);
+  return d;
+}
+
+const fixtures = new URL('../../core/test/fixtures/webpack5-basic/', import.meta.url).pathname;
+const output = join(fixtures, 'output');
+
+/** home を一時ディレクトリにして sa を実行する */
+function cli(home: string) {
+  return async (...args: string[]) => {
+    let stdout = '';
+    let stderr = '';
+    const code = await run(['node', 'sa', '--home', home, ...args], {
+      stdout: (s) => (stdout += s),
+      stderr: (s) => (stderr += s),
+      env: {},
+      cwd: home,
     });
-    expect(CLI_VERSION).toBe('0.0.0');
+    return { code, stdout, stderr, json: <T = Record<string, unknown>>() => JSON.parse(stdout) as T };
+  };
+}
+
+const evidence = ['--policy-confirmed-at', '2026-10-20', '--policy-source', 'https://hackerone.com/example/policy'];
+
+describe('sa', () => {
+  it('prints its version and help', async () => {
+    const sa = cli(tmp());
+    expect(await sa('--version')).toMatchObject({ code: 0, stdout: `${CLI_VERSION}\n` });
+    const help = await sa('--help');
+    expect(help.code).toBe(0);
+    for (const c of ['target', 'load', 'backup']) expect(help.stdout).toContain(c);
   });
 
-  it('registers the expected placeholder commands', () => {
-    const names = buildProgram()
-      .commands.map((c) => c.name())
-      .sort();
-    expect(names).toEqual(['load', 'target']);
+  it('rejects unknown commands and options as usage errors', async () => {
+    const sa = cli(tmp());
+    expect((await sa('nope')).code).not.toBe(0);
+    expect((await sa('target', 'add', 'x', '--llm-code-policy', 'sometimes')).code).not.toBe(0);
+  });
+});
+
+describe('sa target', () => {
+  it('adds, lists, shows and updates a target', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    const added = await sa('--json', 'target', 'add', 'example', '--allow', 'example.com', '--allow', 'api.example.com');
+    expect(added.code).toBe(0);
+    expect(added.json()).toMatchObject({
+      name: 'example',
+      scope: { allowed_domains: ['example.com', 'api.example.com'], llm_code_policy: 'deny' },
+    });
+    // データは home の下にできる（接続を閉じると WAL のファイルは消える）
+    expect(readdirSync(home).sort()).toEqual(['blobs', 'sa.db', 'workspace']);
+
+    const list = await sa('target', 'list');
+    expect(list.stdout).toContain('example  llm_code_policy=deny  example.com,api.example.com');
+
+    const updated = await sa('--json', 'target', 'set-scope', 'example', '--llm-code-policy', 'no_original', ...evidence);
+    expect(updated.code).toBe(0);
+    // 指定しなかった項目はそのまま
+    expect(updated.json()).toMatchObject({
+      scope: { allowed_domains: ['example.com', 'api.example.com'], llm_code_policy: 'no_original' },
+    });
+
+    const shown = await sa('target', 'show', 'example');
+    expect(shown.stdout).toContain('llm_code_policy : no_original (confirmed 2026-10-20, https://hackerone.com/example/policy)');
+    expect(shown.stdout).toContain('versions        : 0');
+  });
+
+  it('refuses to allow LLM access without recording where the program allows it', async () => {
+    const sa = cli(tmp());
+    await sa('target', 'add', 'example');
+    const r = await sa('target', 'set-scope', 'example', '--llm-code-policy', 'allow');
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain('llm_code_policy_confirmed_at');
+    expect((await sa('--json', 'target', 'show', 'example')).json()).toMatchObject({ scope: { llm_code_policy: 'deny' } });
+  });
+
+  it('reports validation details and maps error codes to exit codes', async () => {
+    const sa = cli(tmp());
+    const bad = await sa('target', 'add', 'example', '--llm-code-policy', 'allow', '--policy-confirmed-at', 'last week', '--policy-source', 'x');
+    expect(bad.code).toBe(2);
+    expect(bad.stderr).toMatch(/llm_code_policy_confirmed_at: /);
+    expect(bad.stderr).toMatch(/llm_code_policy_source_url: /);
+    expect((await sa('target', 'show', 'missing')).code).toBe(3);
+  });
+});
+
+describe('sa load', () => {
+  it('loads a bundle, unpacks it and imports its sourcemaps', async () => {
+    const sa = cli(tmp());
+    await sa('target', 'add', 'example');
+    const files = readdirSync(output).map((f) => join(output, f));
+    const r = await sa('--json', 'load', 'example', ...files, '--collected-at', 'now', '--label', 'v1', '--notes', '{"loggedIn":true}');
+    expect(r.code).toBe(0);
+    const body = r.json<{
+      load: { createdVersion: boolean; added: number; versionId: string };
+      unpack: { moduleCount: number; skipped: number };
+      sourcemaps: { origName: string; result?: { accepted: boolean } }[];
+    }>();
+    expect(body.load).toMatchObject({ createdVersion: true, added: 6 });
+    expect(body.unpack).toMatchObject({ moduleCount: 4, skipped: 0 });
+    expect(body.sourcemaps.map((s) => [s.origName, s.result?.accepted]).sort()).toEqual([
+      ['949.d486fd40.js.map', true],
+      ['lazy.ce3f5b37.js.map', true],
+      ['main.037dca38.js.map', true],
+    ]);
+
+    const shown = await sa('--json', 'target', 'show', 'example');
+    expect(shown.json()).toMatchObject({
+      versions: [{ id: body.load.versionId, label: 'v1', collectionNotes: { loggedIn: true }, files: { raw: 6, unpacked: 4, original: 16 } }],
+    });
+  });
+
+  it('adds files to an existing version and reports maps it cannot place', async () => {
+    const sa = cli(tmp());
+    await sa('target', 'add', 'example');
+    const first = await sa('--json', 'load', 'example', join(output, 'main.037dca38.js'), '--collected-at', '2026-10-01T09:00:00Z');
+    const versionId = first.json<{ load: { versionId: string } }>().load.versionId;
+
+    // 別ビルドの map は名前でも sourceMappingURL でも生成元が決まらない → その map だけ取り込まずに続ける
+    const r = await sa('load', 'example', join(fixtures, 'other-build', 'main.57d12ed8.js.map'), '--version-id', versionId);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(`version ${versionId}: 1 files, 1 added`);
+    expect(r.stdout).toContain('sourcemap main.57d12ed8.js.map: not imported - cannot find the generated file');
+  });
+
+  it('reads per-file information from a manifest', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    await sa('target', 'add', 'example');
+    writeFileSync(
+      join(home, 'manifest.json'),
+      JSON.stringify([
+        {
+          path: join(output, 'lazy.ce3f5b37.js'),
+          sourceUrls: ['https://cdn.example.com/lazy.ce3f5b37.js'],
+          loadedByOrigins: ['https://app.example.com'],
+          ownership: 'first_party',
+        },
+      ]),
+    );
+    const r = await sa('--json', 'load', 'example', '--manifest', 'manifest.json', '--collected-at', 'now', '--no-unpack');
+    expect(r.code).toBe(0);
+    expect(r.json()).toMatchObject({ load: { added: 1 }, sourcemaps: [] });
+    expect(r.json<{ unpack?: unknown }>().unpack).toBeUndefined();
+  });
+
+  it('validates its input', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    await sa('target', 'add', 'example');
+    const lazy = join(output, 'lazy.ce3f5b37.js');
+    expect((await sa('load', 'example', lazy)).stderr).toContain('collectedAt is required');
+    expect((await sa('load', 'example', '--collected-at', 'now')).code).toBe(2);
+    expect((await sa('load', 'missing', lazy, '--collected-at', 'now')).code).toBe(3);
+    expect((await sa('load', 'example', lazy, '--collected-at', 'now', '--notes', '[1]')).code).toBe(2);
+    writeFileSync(join(home, 'capture.har'), '{"log":{}}');
+    const har = await sa('load', 'example', 'capture.har', '--collected-at', 'now');
+    expect(har.code).toBe(2);
+    expect(har.stderr).toContain('HAR files are not stored');
+  });
+});
+
+describe('sa backup', () => {
+  it('writes and verifies a snapshot, and never overwrites', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    await sa('target', 'add', 'example');
+    const r = await sa('--json', 'backup', 'snapshot.db');
+    expect(r.code).toBe(0);
+    expect(r.json()).toMatchObject({ path: join(home, 'snapshot.db'), schemaVersion: 1, blobDir: join(home, 'blobs') });
+    expect(existsSync(join(home, 'snapshot.db'))).toBe(true);
+    expect((await sa('backup', 'snapshot.db')).code).toBe(2);
   });
 });

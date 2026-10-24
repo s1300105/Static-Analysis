@@ -1,0 +1,14 @@
+# イメージに入れるのは、ビルドに要るソースと設定だけ
+**/node_modules
+**/dist
+**/coverage
+.git
+.github
+docs
+docker/**/*.md
+packages/*/test
+*.db
+*.sqlite*
+*.bak
+blobs
+workspace

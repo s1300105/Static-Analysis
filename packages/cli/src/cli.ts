@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { buildProgram } from './index';
+import { run } from './index';
 
-buildProgram()
-  .parseAsync(process.argv)
-  .catch((err: unknown) => {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exitCode = 1;
-  });
+process.exitCode = await run(process.argv, {
+  stdout: (s) => process.stdout.write(s),
+  stderr: (s) => process.stderr.write(s),
+  env: process.env,
+  cwd: process.cwd(),
+});

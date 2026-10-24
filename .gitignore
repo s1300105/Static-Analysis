@@ -20,3 +20,6 @@ blobs/
 *.db
 workspace/
 *.bak
+
+# docker compose の入力ディレクトリ（docker/compose.yaml の SA_INPUT_DIR 既定）
+docker/in/

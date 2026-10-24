@@ -2,7 +2,16 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach } from 'vitest';
-import { type Database, type OpenDatabaseOptions, openDatabase } from '@sa/core';
+import {
+  type Database,
+  type OpenDatabaseOptions,
+  type SaConfig,
+  type SaContext,
+  closeContext,
+  configForHome,
+  openContext,
+  openDatabase,
+} from '@sa/core';
 
 /** テストごとの一時ディレクトリ。afterEach で消す */
 export function useTmpDir(): () => string {
@@ -38,4 +47,18 @@ export function catchError(fn: () => unknown): unknown {
     return err;
   }
   throw new Error('expected an error');
+}
+
+/** 一時ディレクトリを home にして openContext する（caller は cli）。afterEach で閉じて消す */
+export function useContext(): (config?: Partial<SaConfig>) => SaContext {
+  const tmp = useTmpDir();
+  const contexts: SaContext[] = [];
+  afterEach(() => {
+    for (const ctx of contexts.splice(0)) closeContext(ctx);
+  });
+  return (config = {}) => {
+    const ctx = openContext({ config: { ...configForHome(tmp()), ...config }, caller: 'cli' });
+    contexts.push(ctx);
+    return ctx;
+  };
 }
