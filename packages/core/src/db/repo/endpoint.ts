@@ -229,6 +229,39 @@ export function firstStaticSeen(ctx: HasDb, targetId: string): Map<string, strin
   return new Map(rows.map((r) => [r.endpointId, r.firstSeen]));
 }
 
+/** 位置のある sighting の位置（raw の中身のハッシュとバイト範囲） */
+export interface SightingLocation {
+  endpointId: string;
+  versionId: string;
+  collectedAt: string;
+  extractedBy: EndpointExtractor;
+  rawFileId: string;
+  contentHash: string;
+  startByte: number;
+  endByte: number;
+}
+
+/** 対象の、位置のある sighting のうち指定の抽出器のものを、新しい版から順に返す（export_endpoints が GraphQL の文書を読み直す） */
+export function listSightingLocations(ctx: HasDb, q: { targetId: string; extractedBy: EndpointExtractor[] }): SightingLocation[] {
+  if (q.extractedBy.length === 0) return [];
+  return dbCall(
+    () =>
+      ctx.db
+        .prepare(
+          `SELECT s.endpoint_id AS endpointId, s.version_id AS versionId, v.collected_at AS collectedAt, s.extracted_by AS extractedBy,
+                  f.id AS rawFileId, f.content_hash AS contentHash, l.start_byte AS startByte, l.end_byte AS endByte
+           FROM endpoint_sighting s
+           JOIN api_endpoint e ON e.id = s.endpoint_id
+           JOIN artifact_version v ON v.id = s.version_id
+           JOIN code_location l ON l.id = s.location_id
+           JOIN artifact_file f ON f.id = l.raw_file_id
+           WHERE e.target_id = ? AND s.extracted_by IN (${q.extractedBy.map(() => '?').join(', ')})
+           ORDER BY v.collected_at DESC, s.version_id, l.raw_file_id, l.start_byte`,
+        )
+        .all(q.targetId, ...q.extractedBy) as SightingLocation[],
+  );
+}
+
 /** 版に sighting がある GraphQL のエンドポイント（operation の無い、送信先そのもの）の origin とパス */
 export function graphqlTransports(ctx: HasDb, versionId: string): { origin: string; pathNorm: string }[] {
   return dbCall(

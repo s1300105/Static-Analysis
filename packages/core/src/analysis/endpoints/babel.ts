@@ -94,13 +94,7 @@ export async function runBabel(ctx: SaContext, version: ArtifactVersion, want: {
 /** raw ごとに worker でパースする（unpack_bundle が読めなかった raw は掛けない） */
 async function parse(ctx: SaContext, version: ArtifactVersion, want: { astUrl: boolean; graphql: boolean }): Promise<Pass> {
   const raws = listArtifactFiles(ctx, { versionId: version.id, layer: 'raw', kind: 'js' });
-  const modules = new Map<string, { start: number; end: number }[]>();
-  for (const u of listArtifactFiles(ctx, { versionId: version.id, layer: 'unpacked', kind: 'js' })) {
-    const start = u.rawOffset ?? 0;
-    const list = modules.get(u.parentFileId!) ?? [];
-    list.push({ start, end: start + ctx.store.sizeOf(u.contentHash) });
-    modules.set(u.parentFileId!, list);
-  }
+  const modules = moduleRanges(ctx, version.id);
   const readable = raws.filter((raw) => raw.parseStatus === 'ok');
   const results = await Promise.all(
     readable.map((raw) =>
@@ -112,6 +106,18 @@ async function parse(ctx: SaContext, version: ArtifactVersion, want: { astUrl: b
     ),
   );
   return { raws, readable: readable.map((raw, i) => ({ raw, result: results[i]! })) };
+}
+
+/** raw ごとの unpack が切り出したモジュールの範囲（raw のバイト位置。unpack を掛けていなければ無し = ファイル全体が 1 つ） */
+export function moduleRanges(ctx: SaContext, versionId: string): Map<string, { start: number; end: number }[]> {
+  const modules = new Map<string, { start: number; end: number }[]>();
+  for (const u of listArtifactFiles(ctx, { versionId, layer: 'unpacked', kind: 'js' })) {
+    const start = u.rawOffset ?? 0;
+    const list = modules.get(u.parentFileId!) ?? [];
+    list.push({ start, end: start + ctx.store.sizeOf(u.contentHash) });
+    modules.set(u.parentFileId!, list);
+  }
+  return modules;
 }
 
 /** 実行ごとのスキップ（unpack_bundle が読めなかった raw・worker の失敗）と、raw ごとの結果 */

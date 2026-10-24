@@ -373,7 +373,7 @@ diffVersions(ctx, { versionId, baseVersionId? })
   : Promise<{ added; removed; newParams; uncollected: { added; removed } }>;                                     // ○  手順2/6
 rankEndpoints(ctx, { targetId, all? }): RankedEndpoint[];  // 決定的な並び順と当たった規則、triage 待ち          // ○読 手順2
 triageEndpoint(ctx, { targetId, endpointId, triage }): void;  // 人間だけ（caller=cli）                            // ×  手順2
-exportEndpoints(ctx, { targetId, filter }): { openapi?: object; graphql?: string };                            // ×  手順2
+exportEndpoints(ctx, { targetId, includeOutOfScope? }): Promise<{ openapi: object; graphql: string; counts }>;  // ×  手順2
 taintPaths(ctx, { versionId, classes }): { candidates: number; clientEntries: number; skipped: SkipDetail };   // ○  手順4/7
 checkOriginValidation(ctx, { versionId }): OriginFinding[];                                                     // ○  手順4
 findPpGadgets(ctx, { versionId }): Gadget[];                                                                    // ○  手順7
@@ -417,6 +417,12 @@ E1 の取り決め（PR-7・PR-8）:
   次に design.md §7.3 の 5 規則（最新版で初出・HAR で未観測・状態を変えるメソッド（GraphQL の MUTATION を含む）・ui_guard が管理者・
   ID らしいパラメータ（名前か、パスの `{}`））を順に見て、当たった規則を `rules` に併記する。「最新版で初出」は静的な抽出器が最初に
   見つけた版で決める。triage は CLI だけが書き、`triaged_params_hash` にその時点のパラメータの集合のハッシュを残す
+- export_endpoints（PR-13b。`analysis/endpoints/export.ts`・`graphqlDocs.ts`）: REST は OpenAPI 3.0.3。パスは path_template の `:name` を
+  `{name}` にし（重なれば番号を付ける）、origin は operation の servers に置く（同じパス・メソッドが複数の origin にあれば 1 つにまとめる）。
+  パラメータは path（必須）・query・header、本文のパラメータは application/json の object の properties（型は付けない）。メソッドが
+  分からないものは path item の `x-sa-method-unknown`、WebSocket は `x-sa-websockets`。GraphQL は operation の文書で、本文は sighting の
+  位置から読み直す（fragment だけの文書には sighting が無いので、GraphQL の sighting のある raw を worker で読み直して fragment の定義を集める）。
+  persisted query と HAR でだけ見たものはコメント。スコープ外（in_scope = false）は既定で出さない。出力は時刻を入れず決定的にする
 - jsluice（PR-9）は raw ファイルごとに子プロセスで掛ける（tree-sitter なので Babel が読めなかったファイルも読む）。出力の癖を直す:
   同じ式の重複（method の有無だけ違う）は 1 つにまとめ、報告済みの呼び出しの範囲に入る文字列リテラルは捨て、`x.get(...)` などの
   method は `type` から補い、送信部（ast_url と同じ規則）と文字列リテラルだけの静的ファイルのパスは捨てる。

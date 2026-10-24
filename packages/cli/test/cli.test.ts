@@ -48,7 +48,7 @@ describe('sa', () => {
     expect(await sa('--version')).toMatchObject({ code: 0, stdout: `${CLI_VERSION}\n` });
     const help = await sa('--help');
     expect(help.code).toBe(0);
-    for (const c of ['target', 'load', 'import-har', 'missing-chunks', 'extract-endpoints', 'endpoints', 'diff', 'triage-endpoint', 'backup']) {
+    for (const c of ['target', 'load', 'import-har', 'missing-chunks', 'extract-endpoints', 'endpoints', 'diff', 'triage-endpoint', 'export-endpoints', 'backup']) {
       expect(help.stdout).toContain(c);
     }
   });
@@ -320,6 +320,29 @@ describe('sa diff / sa triage-endpoint', () => {
     expect(after.at(-1)).toMatch(new RegExp(`^ {2}POST {4}/api/new .*${newOne.id}$`));
     expect((await sa('triage-endpoint', 'example', newOne.id, 'maybe')).code).toBe(2);
     expect((await sa('triage-endpoint', 'example', 'nope', 'ignore')).code).toBe(3);
+  });
+});
+
+describe('sa export-endpoints', () => {
+  it('writes OpenAPI and GraphQL documents and refuses to overwrite them', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    await sa('target', 'add', 'example');
+    await sa('load', 'example', endpointsBundle, graphqlBundle, '--collected-at', 'now');
+    await sa('extract-endpoints', 'example');
+    const r = await sa('export-endpoints', 'example', '--out', 'export');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(`wrote ${join(home, 'export', 'openapi.json')}`);
+    expect(r.stdout).toContain('7 GraphQL operations');
+    const openapi = JSON.parse(readFileSync(join(home, 'export', 'openapi.json'), 'utf8')) as { openapi: string; paths: Record<string, unknown> };
+    expect(openapi.openapi).toBe('3.0.3');
+    expect(Object.keys(openapi.paths)).toContain('/api/v2/users/{param}');
+    expect(readFileSync(join(home, 'export', 'operations.graphql'), 'utf8')).toContain('query GetFeed($first: Int, $after: String) {');
+
+    const again = await sa('export-endpoints', 'example', '--out', 'export');
+    expect(again.code).toBe(2);
+    expect(again.stderr).toContain('already exists');
+    expect((await sa('export-endpoints', 'example', '--out', 'export', '--force')).code).toBe(0);
   });
 });
 

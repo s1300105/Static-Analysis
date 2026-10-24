@@ -74,6 +74,8 @@ export interface EndpointsOutput {
   /** 範囲ごとに推定できたベース URL（ソースの順） */
   bases: string[];
   graphql: GraphqlOperation[];
+  /** GraphQL の fragment の定義のある式（operation の無い文書も含む） */
+  graphqlFragments: { extractor: 'graphql_text' | 'graphql_ast'; name: string; startByte: number; endByte: number }[];
 }
 
 type Part = { lit: string } | { expr: string | undefined };
@@ -114,9 +116,9 @@ export default function extractFromJs(input: EndpointsInput): EndpointsOutput {
   const scopes = new Scopes(input.bytes, input.modules ?? []);
   const bindings = new Bindings(root, scopes);
   const rest = input.rest !== false ? restCalls(root, scopes, bindings) : { candidates: [], bases: [] };
-  const graphql = input.graphql === true ? extractGraphql(root, scopes, bindings) : [];
+  const { operations: graphql, fragments } = input.graphql === true ? extractGraphql(root, scopes, bindings) : { operations: [], fragments: [] };
 
-  const offsets = toByteOffsets(text, [...rest.candidates, ...graphql].flatMap((c) => [c.start, c.end]));
+  const offsets = toByteOffsets(text, [...rest.candidates, ...graphql, ...fragments].flatMap((c) => [c.start, c.end]));
   const calls: ExtractedCall[] = [];
   const seen = new Set<string>();
   for (const c of rest.candidates) {
@@ -130,6 +132,7 @@ export default function extractFromJs(input: EndpointsInput): EndpointsOutput {
     calls,
     bases: rest.bases,
     graphql: graphql.map(({ start, end, ...op }) => ({ ...op, startByte: offsets.get(start)!, endByte: offsets.get(end)! })),
+    graphqlFragments: fragments.map(({ start, end, ...f }) => ({ ...f, startByte: offsets.get(start)!, endByte: offsets.get(end)! })),
   };
 }
 

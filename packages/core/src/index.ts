@@ -90,6 +90,7 @@ export {
 export { listEndpoints, type EndpointListItem, type EndpointSummary, type ListEndpointsOptions } from './analysis/endpoints/list';
 export type { HarMatchResult } from './analysis/endpoints/har';
 export { diffVersions, type DiffResult, type EndpointChange } from './analysis/endpoints/diff';
+export { exportEndpoints, type ExportEndpointsOptions, type ExportEndpointsResult } from './analysis/endpoints/export';
 export {
   ORDER_RULES,
   paramsHash,

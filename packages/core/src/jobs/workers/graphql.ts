@@ -33,6 +33,14 @@ export interface GraphqlFound {
   end: number;
 }
 
+/** fragment の定義のある式（operation の無い文書も含む。export_endpoints が文書を組み立て直すのに使う） */
+export interface FragmentFound {
+  extractor: 'graphql_text' | 'graphql_ast';
+  name: string;
+  start: number;
+  end: number;
+}
+
 const DOCUMENT_START_RE = /^\s*(?:#[^\n]*\n\s*)*(?:query|mutation|subscription|fragment)\b/;
 const SHORTHAND_START_RE = /^\s*\{/;
 const GQL_TAGS = new Set(['gql', 'graphql']);
@@ -47,8 +55,9 @@ interface Operation {
   variables: string[];
 }
 
-export function extractGraphql(root: Node, scopes: Scopes, bindings: Bindings): GraphqlFound[] {
+export function extractGraphql(root: Node, scopes: Scopes, bindings: Bindings): { operations: GraphqlFound[]; fragments: FragmentFound[] } {
   const found: GraphqlFound[] = [];
+  const fragments: FragmentFound[] = [];
   /** 生成物・DocumentNode の範囲（中の文字列を graphql_text で重ねて数えない） */
   const claimed: { start: number; end: number }[] = [];
   const texts: { text: string; start: number; end: number; tagged: boolean }[] = [];
@@ -70,7 +79,8 @@ export function extractGraphql(root: Node, scopes: Scopes, bindings: Bindings): 
       }
       const doc = documentOperations(n, scope, bindings);
       if (doc) {
-        for (const op of doc) found.push({ extractor: 'graphql_ast', ...op, persistedId: null, start: n.start!, end: n.end! });
+        for (const op of doc.ops) found.push({ extractor: 'graphql_ast', ...op, persistedId: null, start: n.start!, end: n.end! });
+        for (const name of doc.fragments) fragments.push({ extractor: 'graphql_ast', name, start: n.start!, end: n.end! });
         claimed.push({ start: n.start!, end: n.end! });
       }
       return;
@@ -107,16 +117,19 @@ export function extractGraphql(root: Node, scopes: Scopes, bindings: Bindings): 
   const textFound: GraphqlFound[] = [];
   for (const t of texts) {
     if (inside(claimed, t.start, t.end) || inside(covered, t.start, t.end)) continue;
-    const ops = operationsInText(t.text, t.tagged);
-    if (!ops) continue;
+    const doc = documentInText(t.text, t.tagged);
+    if (!doc) continue;
     covered.push({ start: t.start, end: t.end });
-    for (const op of ops) textFound.push({ extractor: 'graphql_text', ...op, persistedId: null, start: t.start, end: t.end });
+    for (const op of doc.ops) textFound.push({ extractor: 'graphql_text', ...op, persistedId: null, start: t.start, end: t.end });
+    for (const name of doc.fragments) fragments.push({ extractor: 'graphql_text', name, start: t.start, end: t.end });
   }
-  return [...found, ...textFound].sort((a, b) => a.start - b.start || a.end - b.end || a.name.localeCompare(b.name));
+  const bySource = <T extends { start: number; end: number; name: string }>(xs: T[]) =>
+    xs.sort((a, b) => a.start - b.start || a.end - b.end || a.name.localeCompare(b.name));
+  return { operations: bySource([...found, ...textFound]), fragments: bySource(fragments) };
 }
 
-/** GraphQL の文書として読めれば operation の並び（fragment だけなら空）。読めなければ undefined */
-function operationsInText(text: string, tagged: boolean): Operation[] | undefined {
+/** GraphQL の文書として読めれば operation と fragment の名前（fragment だけなら operation は空）。読めなければ undefined */
+function documentInText(text: string, tagged: boolean): { ops: Operation[]; fragments: string[] } | undefined {
   if (text.length > MAX_TEXT) return undefined;
   if (!DOCUMENT_START_RE.test(text) && !(tagged && SHORTHAND_START_RE.test(text))) return undefined;
   let doc: DocumentNode;
@@ -125,7 +138,18 @@ function operationsInText(text: string, tagged: boolean): Operation[] | undefine
   } catch {
     return undefined;
   }
-  return operationsOf(doc.definitions as unknown[]);
+  return { ops: operationsOf(doc.definitions as unknown[]), fragments: fragmentNamesOf(doc.definitions as unknown[]) };
+}
+
+function operationsInText(text: string, tagged: boolean): Operation[] | undefined {
+  return documentInText(text, tagged)?.ops;
+}
+
+function fragmentNamesOf(definitions: unknown[]): string[] {
+  return definitions
+    .map((d) => d as { kind?: unknown; name?: { value?: unknown } })
+    .filter((d) => d?.kind === 'FragmentDefinition' && typeof d.name?.value === 'string')
+    .map((d) => d.name!.value as string);
 }
 
 /** DocumentNode（またはそれを評価した値）の definitions から operation を取り出す */
@@ -151,16 +175,16 @@ function operationsOf(definitions: unknown[]): Operation[] {
 }
 
 /** kind: "Document" のオブジェクトリテラルなら、その operation（fragment だけなら空） */
-function documentOperations(n: ObjectExpression, scope: number, bindings: Bindings): Operation[] | undefined {
+function documentOperations(n: ObjectExpression, scope: number, bindings: Bindings): { ops: Operation[]; fragments: string[] } | undefined {
   if (literalProp(n, 'kind', scope, bindings) !== 'Document' || !prop(n, 'definitions')) return undefined;
   const loc = evaluate(prop(n, 'loc'), scope, bindings);
   const body = (loc as { source?: { body?: unknown } } | undefined)?.source?.body;
   if (typeof body === 'string') {
-    const ops = operationsInText(body, true);
-    if (ops) return ops;
+    const doc = documentInText(body, true);
+    if (doc) return doc;
   }
   const definitions = evaluate(prop(n, 'definitions'), scope, bindings);
-  return Array.isArray(definitions) ? operationsOf(definitions) : [];
+  return Array.isArray(definitions) ? { ops: operationsOf(definitions), fragments: fragmentNamesOf(definitions) } : { ops: [], fragments: [] };
 }
 
 /** Relay の生成物（params に name と operationKind）なら、その operation と persisted query の id */
