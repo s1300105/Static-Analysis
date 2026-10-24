@@ -27,7 +27,25 @@ export interface SaConfig {
   workerLimits: WorkerLimits;
   /** sourcemap の簡易検証の一致率の閾値（design.md §13 で未決。評価で決めるまでの既定値） */
   mapCheckThreshold: number;
+  /** 外部ツールの場所と版。無いツールを使う解析は「使えない」と返す */
+  tools: ToolsConfig;
 }
+
+export interface ToolConfig {
+  /** 実行ファイルの絶対パス（PATH 探索に頼らない） */
+  path: string;
+  /** 設定・tools.json に版が無ければ実行ファイルの sha256 を版として残す */
+  version?: string;
+  /** 1 ファイルあたりの上限（ミリ秒） */
+  timeoutMs: number;
+}
+
+export interface ToolsConfig {
+  jsluice?: ToolConfig;
+}
+
+/** 外部ツールの 1 ファイルあたりの既定の上限 */
+export const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 
 /**
  * 仮の既定値。webpack 5 の fixture で、正しい map は 0.83〜1.0（小さいチャンクでは webpack が合成した
@@ -41,6 +59,7 @@ export const DEFAULT_CONFIG: Readonly<Omit<SaConfig, 'dbPath' | 'blobDir' | 'wor
   busyTimeoutMs: DEFAULT_BUSY_TIMEOUT_MS,
   workerLimits: DEFAULT_WORKER_LIMITS,
   mapCheckThreshold: DEFAULT_MAP_CHECK_THRESHOLD,
+  tools: {},
 };
 
 export interface SaContext {

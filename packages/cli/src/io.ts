@@ -37,6 +37,9 @@ export function globals(cmd: Command): GlobalOptions {
   return cmd.optsWithGlobals<GlobalOptions>();
 }
 
+/** 繰り返し指定できるオプション（commander の引数処理） */
+export const collect = (value: string, previous: string[] | undefined): string[] => [...(previous ?? []), value];
+
 /** コマンドラインで受けたパスはカレントディレクトリから解く */
 export function absolute(io: CliIo, p: string): string {
   return isAbsolute(p) ? p : resolve(io.cwd, p);

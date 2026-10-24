@@ -221,7 +221,9 @@ PR-5 で入れたもの（`config.ts`・`context.ts`）:
 - 設定ファイルは 引数 > `SA_CONFIG` > `<home>/config.json`（無ければ既定値だけ）。形は `@sa/types` の `SaConfigFileSchema`
   （`dbPath`・`blobDir`・`workspaceDir`・`busyTimeoutMs`・`maxWorkers`・`maxChildren`・`workerLimits`・`mapCheckThreshold`）。パスは設定ファイルからの相対でもよい。
 - `openContext({ config, caller })` はディレクトリを無ければ 0700 で作り、DB を開いて移行し、blob ストアとジョブ実行器を用意する。`closeContext` で閉じる。
-- 解析ツールのパスと CodeQL の固定環境変数は、それを使う PR（M2 の jsluice、M4 の CodeQL）で足す。
+- 外部ツール（PR-9 で jsluice）: `tools.<name>`（`path`・`version`・`timeoutMs`。既定 120 秒）を設定ファイルに書くか、
+  環境変数 `SA_TOOLS` で実行イメージの `/opt/sa/tools.json` を指す（イメージは `SA_TOOLS` を設定済み）。設定ファイルが優先。
+  `version` が無ければ実行ファイルの sha256 の先頭を版として残す。CodeQL の固定環境変数は M4 で足す。
 
 ### 3.6 状態遷移の権限（`policy/transitions.ts`）
 
@@ -334,9 +336,9 @@ callPath(ctx, { candidateId? , pathResultId }): CallPathResult;                 
 
 ```ts
 detectStack(ctx, { versionId }): DetectedLibrary[];                                                             // ○  手順4
-extractEndpoints(ctx, { versionId })
-  : Promise<{ runId; modules; calls; dropped; endpoints: number; sightings: number; skipped }>;                // ○  手順2
-listEndpoints(ctx, { targetId, includeUnseen? }): EndpointListItem[];  // VIEW の派生値＋パラメータの和集合         // ○読 手順2
+extractEndpoints(ctx, { versionId, extractors? })
+  : Promise<{ versionId; extractors: { [name]: { runId; inputs; found; dropped; sightings; skipped } }; unavailable; endpoints; sightings }>; // ○ 手順2
+listEndpoints(ctx, { targetId, all? }): EndpointListItem[];  // VIEW の派生値＋パラメータの和集合                  // ○読 手順2
 diffVersions(ctx, { versionId, baseVersionId }): DiffResult;                                                    // ○  手順2/6
 exportEndpoints(ctx, { targetId, filter }): { openapi?: object; graphql?: string };                            // ×  手順2
 taintPaths(ctx, { versionId, classes }): { candidates: number; clientEntries: number; skipped: SkipDetail };   // ○  手順4/7
@@ -350,6 +352,8 @@ runRules(ctx, { versionId }): RuleHit[];                                        
 E1 の取り決め（PR-7・PR-8）:
 - `path_norm` は `analysis/endpoints/normalize.ts` の `normalizeEndpointUrl` だけで作る（全抽出器で共通）。スコープ判定は `policy/scope.ts` と
   VIEW `api_endpoint_summary` が同じ規則を持ち、テストで一致を確かめる。
+- 抽出器ごとに analysis_run を 1 行作る（tool は `extract_endpoints/ast_url`・`extract_endpoints/jsluice`）。sighting の run_id はその行。
+  既定では使える抽出器をすべて掛ける（ast_url → jsluice の順）。jsluice の設定が無ければ `unavailable` に入れて続ける（明示したときは誤り）。
 - ast_url は **HTTP クライアントの呼び出し**（fetch / new Request、`x.get/post/…`、`{ url, method, … }` の設定オブジェクトと `$.ajax`、
   `xhr.open`、`sendBeacon`、`new WebSocket` / `new EventSource`）だけを拾う。呼び出しに渡らない URL らしい文字列は jsluice（PR-9）に任せる
   （SPA のルート定義・静的ファイルのパスを拾わないため）。method の無い fetch / 設定オブジェクトは GET、method が式なら不明（`''`）。
@@ -359,8 +363,14 @@ E1 の取り決め（PR-7・PR-8）:
   ファイル全体を読む。位置は呼び出し式の raw 基準のバイト範囲（`raw_offset` を足す）で `code_location` に置き、表示用の行・列も入れる。
 - 相対 URL の origin は raw の `loaded_by_origins`（http(s) のオリジン）で補う（design.md §6.2）。複数あればそれぞれの endpoint にし、
   無ければ `''`。相対の WebSocket は ws(s) にする。パスに固定の部分が無く origin も分からない URL は捨てる（`dropped`）。
-- 掛け直し: raw ファイルごとに全モジュールを読めたら、その raw にある ast_url の sighting を作り直す（読めないモジュールがあれば足すだけ）。
-  `api_endpoint` は triage を持つので消さない。sighting の無くなった endpoint は `listEndpoints` の既定では出さない（`--all` で出す）。
+- jsluice（PR-9）は raw ファイルごとに子プロセスで掛ける（tree-sitter なので Babel が読めなかったファイルも読む）。出力の癖を直す:
+  同じ式の重複（method の有無だけ違う）は 1 つにまとめ、報告済みの呼び出しの範囲に入る文字列リテラルは捨て、`x.get(...)` などの
+  method は `type` から補い、送信部（ast_url と同じ規則）と文字列リテラルだけの静的ファイルのパスは捨てる。
+  同じ本文は同じ結果になるので、本文が何度も現れればそのすべての位置に置く。テストは記録した出力（fixture の `jsluice-urls.jsonl`）と
+  偽の実行ファイルで回し、実物とは `SA_TEST_JSLUICE` があれば一致を確かめる（CI では Docker の verify.sh が実行イメージで確かめる）。
+- 掛け直し: 抽出器が raw ファイルを全部読めたら、その raw にあるその抽出器の sighting を作り直す（読めない部分があれば足すだけ）。
+  `api_endpoint` は triage を持つので消さない。`listEndpoints` は既定で、sighting の無くなった endpoint と、同じ protocol・origin・パスに
+  メソッドの分かる endpoint があるメソッド不明の endpoint を省く（`--all` で出す）。
 `taintPaths` は標準 .ql をそのまま流さず**自前クエリパック**を使い、確定事実を data extension YAML で注入する（design.md §3.4）。
 
 ### 5.4 Findings（`findings/`）★ループの心臓部
@@ -428,7 +438,7 @@ PR-5 での取り決め:
 - `sa load` はファイルを位置引数か `--manifest`（`LoadArtifactFile` の JSON 配列。配信 URL 等を持てる）で受ける。新しい版には `--collected-at`（ISO 8601 か `now`）が要る。
   生成元が決まらない sourcemap はその map だけ取り込まずに続け、理由を表示する。
 - ビルド後の `sa` を実際に起動して一通り動かす `pnpm smoke` を CI で回す。
-- `sa extract-endpoints <target>` は `--version-id` を省けば取得日時が最も新しい版を読む（PR-8）。`sa endpoints <target>` は
+- `sa extract-endpoints <target>` は `--version-id` を省けば取得日時が最も新しい版を読む（PR-8）。`--extractor` で抽出器を選べる（PR-9）。`sa endpoints <target>` は
   メソッド・URL（origin＋path_template）・パラメータ（置き場所:名前）・スコープ・sighting の数を 1 行ずつ出す。
 
 ### 6.2 `@sa/mcp`（sa-mcp サーバ）
@@ -462,7 +472,7 @@ MVP では手順4（M4）で導入。それまでは §5.3 の決定的な並び
 |---|---|---|---|---|
 | CodeQL CLI | child | `CODEQL_EXTRACTOR_JAVASCRIPT_ALLOW_MINIFIED_FILES=true` 常設、`--ram` 指定、パック事前取得、`LGTM_INDEX_FILTERS` で include 制御 | SARIF 位置 → relinked/pretty の position_map → raw | §3.4, §6.6 |
 | Semgrep | child | `--metrics=off` `--disable-version-check` `--timeout` `--max-target-bytes`、対象ファイル明示 | モジュール/pretty → raw | §6.6 |
-| jsluice | child(Go) | オフライン | 出力断片を raw 内で探索しバイト範囲へ | §7.3 |
+| jsluice | child(Go) | `urls --include-source --placeholder EXPR <blob の絶対パス>`、env は空。http(s) の引数は取りに行くので渡さない | `source` を raw のバイト列で探し、出現するすべての位置へ（見つからなければ unmapped） | §7.3 |
 | webcrack unminify/unpack | worker | AST 操作のみ | AST 元位置（renamed は証拠に使わない） | §6.6 |
 | webcrack deobfuscate | child（別プロセス） | **既定オフ**、`--network none`、isolated-vm の `memoryLimit`/`timeout`、入出力ファイルのみ受け渡し | — | §6.6 |
 
@@ -514,7 +524,7 @@ M2（第1段 E1。計画書 M2）の PR 単位:
 7. **PR-7 E1 のスキーマ**: `0002_e1.sql`（`api_endpoint`・`endpoint_sighting`・`page_context`、派生値の VIEW `api_endpoint_summary`）、
    `path_norm` の正規化（`analysis/endpoints/normalize.ts`）、スコープ判定（`policy/scope.ts`。VIEW の in_scope と同じ規則）、リポジトリ関数。
 8. **PR-8 ast_url 抽出器**: Babel AST から HTTP クライアントの呼び出しを拾う `extractEndpoints`（worker）、`listEndpoints`、`sa extract-endpoints` / `sa endpoints`。
-9. **PR-9 jsluice 抽出器**: 子プロセス＋raw への位置戻し。ツールのパスを設定に足す。
+9. **PR-9 jsluice 抽出器**: 子プロセス＋raw への位置戻し。ツールのパスを設定（`tools`・`SA_TOOLS`）に足す。
 10. **PR-10 GraphQL 抽出**: graphql-js（本文・DocumentNode・Relay・persisted hash）。
 11. **PR-11 `import_har`**: 許可リスト抽出（HAR を保存しない・値を残さないテスト）、`page_context`、`extracted_by='har'` の sighting。
 12. **PR-12 `find_missing_chunks`**: チャンクマップ・動的 import・`sourceMappingURL`・`*.LICENSE.txt`、対象外ホストの区別。

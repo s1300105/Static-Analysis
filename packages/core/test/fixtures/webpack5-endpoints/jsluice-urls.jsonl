@@ -1,0 +1,19 @@
+{"url":"/api/v2EXPREXPR","queryParams":[],"bodyParams":[],"method":"GET","type":"fetch","source":"fetch(\"/api/v2\"+t+(o.params?\"?\"+new URLSearchParams(o.params):\"\"),{method:e,body:a\u0026\u0026JSON.stringify(a),headers:o.headers})","filename":"main.c452f02c.js"}
+{"url":"/api/v2EXPREXPR","queryParams":[],"bodyParams":[],"method":"","type":"fetch","source":"fetch(\"/api/v2\"+t+(o.params?\"?\"+new URLSearchParams(o.params):\"\"),{method:e,body:a\u0026\u0026JSON.stringify(a),headers:o.headers})","filename":"main.c452f02c.js"}
+{"url":"/api/v2","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"/api/v2\"","filename":"main.c452f02c.js"}
+{"url":"/docs/EXPR","queryParams":[],"bodyParams":[],"method":"","type":"a.delete","source":"a.delete(\"/docs/\"+e)","filename":"main.c452f02c.js"}
+{"url":"/docs/","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"/docs/\"","filename":"main.c452f02c.js"}
+{"url":"/admin/stats","queryParams":[],"bodyParams":[],"method":"","type":"a.get","source":"a.get(\"/admin/stats\")","filename":"main.c452f02c.js"}
+{"url":"/admin/stats","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"/admin/stats\"","filename":"main.c452f02c.js"}
+{"url":"https://auth.example.com/oauth/token","queryParams":[],"bodyParams":[],"method":"POST","headers":{"Content-Type":"application/json","X-Client-Version":"3.1"},"contentType":"application/json","type":"fetch","source":"fetch(\"https://auth.example.com/oauth/token\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\",\"X-Client-Version\":\"3.1\"},body:JSON.stringify({username:e,password:t,grant_type:\"password\"})})","filename":"main.c452f02c.js"}
+{"url":"https://auth.example.com/oauth/token","queryParams":[],"bodyParams":[],"method":"","type":"fetch","source":"fetch(\"https://auth.example.com/oauth/token\",{method:\"POST\",headers:{\"Content-Type\":\"application/json\",\"X-Client-Version\":\"3.1\"},body:JSON.stringify({username:e,password:t,grant_type:\"password\"})})","filename":"main.c452f02c.js"}
+{"url":"https://auth.example.com/oauth/token","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"https://auth.example.com/oauth/token\"","filename":"main.c452f02c.js"}
+{"url":"/legacy/reports/EXPR/export","queryParams":[],"bodyParams":[],"method":"POST","type":"XMLHttpRequest.open","source":"t.open(\"POST\",\"/legacy/reports/\"+e+\"/export\")","filename":"main.c452f02c.js"}
+{"url":"/legacy/reports/","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"/legacy/reports/\"","filename":"main.c452f02c.js"}
+{"url":"/export","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"/export\"","filename":"main.c452f02c.js"}
+{"url":"/telemetry/ping","queryParams":[],"bodyParams":[],"method":"","type":"navigator.sendBeacon","source":"navigator.sendBeacon(\"/telemetry/ping\",\"x\")","filename":"main.c452f02c.js"}
+{"url":"/telemetry/ping","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"/telemetry/ping\"","filename":"main.c452f02c.js"}
+{"url":"/api/v1/legacy-search","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"/api/v1/legacy-search\"","filename":"main.c452f02c.js"}
+{"url":"/users/:id","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"/users/:id\"","filename":"main.c452f02c.js"}
+{"url":"/settings","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"/settings\"","filename":"main.c452f02c.js"}
+{"url":"/static/logo.png","queryParams":[],"bodyParams":[],"method":"","type":"stringLiteral","source":"\"/static/logo.png\"","filename":"main.c452f02c.js"}

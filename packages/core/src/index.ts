@@ -32,11 +32,14 @@ export type {
 export {
   DEFAULT_CONFIG,
   DEFAULT_MAP_CHECK_THRESHOLD,
+  DEFAULT_TOOL_TIMEOUT_MS,
   closeContext,
   openContext,
   type OpenContextOptions,
   type SaConfig,
   type SaContext,
+  type ToolConfig,
+  type ToolsConfig,
 } from './context';
 export { CONFIG_FILE_NAME, configForHome, resolveConfig, type ResolveConfigOptions, type ResolvedConfig } from './config';
 // 対象の管理（scope の書き込みは CLI だけ）
@@ -60,9 +63,12 @@ export { importSourcemap, type ImportSourcemapOptions, type ImportSourcemapResul
 export { ingestArtifacts, type IngestOptions, type IngestResult, type SourcemapIngest } from './artifact/ingest';
 // Analysis（design.md §7.3）。E1: エンドポイントの抽出と一覧
 export {
+  CODE_EXTRACTORS,
   extractEndpoints,
+  type CodeExtractor,
   type ExtractEndpointsOptions,
   type ExtractEndpointsResult,
+  type ExtractorStats,
 } from './analysis/endpoints/extract';
 export { listEndpoints, type EndpointListItem, type EndpointSummary, type ListEndpointsOptions } from './analysis/endpoints/list';
 export { normalizeEndpointUrl, type NormalizedEndpoint } from './analysis/endpoints/normalize';

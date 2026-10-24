@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_CONFIG,
+  DEFAULT_TOOL_TIMEOUT_MS,
   SCHEMA_VERSION,
   type MigrateResult,
   closeContext,
@@ -70,6 +71,33 @@ describe('resolveConfig', () => {
     expect(code(() => resolveConfig({ home, env: {} }))).toBe('INVALID_INPUT');
     writeFileSync(join(home, 'config.json'), JSON.stringify({ mapCheckThreshold: 2 }));
     expect(code(() => resolveConfig({ home, env: {} }))).toBe('INVALID_INPUT');
+  });
+
+  it('takes tools from the image tools file (SA_TOOLS) and lets config.json override them', () => {
+    const home = tmp();
+    const image = tmp();
+    // 実行イメージの /opt/sa/tools.json と同じ形（使わないツールの項目もある）
+    writeFileSync(
+      join(image, 'tools.json'),
+      JSON.stringify({
+        codeql: { path: '/opt/codeql/codeql', version: '2.27.3' },
+        jsluice: { path: 'bin/jsluice', version: 'v0.0.0-x' },
+        node: { version: 'v22' },
+      }),
+    );
+    const env = { SA_TOOLS: join(image, 'tools.json') };
+    expect(resolveConfig({ home, env }).config.tools).toEqual({
+      jsluice: { path: join(image, 'bin', 'jsluice'), version: 'v0.0.0-x', timeoutMs: DEFAULT_TOOL_TIMEOUT_MS },
+    });
+    expect(resolveConfig({ home, env: {} }).config.tools).toEqual({});
+
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ tools: { jsluice: { path: './jsluice', timeoutMs: 5000 } } }));
+    expect(resolveConfig({ home, env }).config.tools).toEqual({ jsluice: { path: join(home, 'jsluice'), timeoutMs: 5000 } });
+
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ tools: { jsluice: { version: 'x' } } }));
+    expect(code(() => resolveConfig({ home, env }))).toBe('INVALID_INPUT');
+    writeFileSync(join(home, 'config.json'), '{}');
+    expect(code(() => resolveConfig({ home, env: { SA_TOOLS: join(image, 'missing.json') } }))).toBe('INVALID_INPUT');
   });
 });
 

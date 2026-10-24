@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 実行環境の確認（docs/plan.md D4、design.md §9「隔離と外向き通信」）。CI（.github/workflows/docker.yml）で回す。
 #   1. 固定した版のツールが入っている
-#   2. ネットワーク無し（--network none）で、jsluice・Semgrep・CodeQL・sa が動く（パックや規則を取りに行かない）
+#   2. ネットワーク無し（--network none）で、jsluice・Semgrep・CodeQL・sa（load・extract-endpoints）が動く（パックや規則を取りに行かない）
 #   3. --network none のコンテナから外へ出られない
 #   4. 内部ネットワークの sa から、プロキシを通さずには外へ出られない（境界はネットワーク層）
 #   5. プロキシは api.anthropic.com:443 だけを通し、ほかは拒否してログに残す
@@ -14,6 +14,7 @@ cd "$(dirname "$0")/.."
 SA_IMAGE=${SA_IMAGE:-sa:local}
 COMPOSE=(docker compose --progress quiet -f docker/compose.yaml)
 FIXTURE="$PWD/packages/core/test/fixtures/webpack5-basic/output"
+ENDPOINTS_FIXTURE="$PWD/packages/core/test/fixtures/webpack5-endpoints/output"
 WORK=$(mktemp -d)
 chmod 0777 "$WORK"
 
@@ -85,6 +86,14 @@ EOF
   echo "$result" | grep -q '"moduleCount": 4' || fail "sa load did not unpack 4 modules: $result"
   [ "$(echo "$result" | grep -c '"accepted": true')" -ge 3 ] || fail "sa load did not accept the 3 sourcemaps: $result"
   ok "sa loads, unpacks and imports sourcemaps offline"
+
+  # extract_endpoints: ast_url と、tools.json（SA_TOOLS）から見つけた jsluice の両方が動く
+  sa_offline() { offline -e SA_HOME=/w/home -v "$WORK:/w" -v "$ENDPOINTS_FIXTURE:/in:ro" "$SA_IMAGE" --json "$@"; }
+  sa_offline load smoke /in/main.c452f02c.js --collected-at now >/dev/null
+  result=$(sa_offline extract-endpoints smoke)
+  echo "$result" | grep -q '"unavailable": \[\]' || fail "sa extract-endpoints did not find jsluice: $result"
+  echo "$result" | tr -d ' \n' | grep -q '"jsluice":{[^}]*"sightings":8' || fail "jsluice did not give the expected 8 sightings: $result"
+  ok "sa extract-endpoints runs ast_url and the pinned jsluice offline"
 fi
 
 # ---- 3. --network none から外へ出られない ----

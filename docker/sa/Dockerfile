@@ -78,8 +78,9 @@ RUN ln -s /opt/sa/dist/cli.js /usr/local/bin/sa \
 ENV SEMGREP_SEND_METRICS=off \
     SEMGREP_ENABLE_VERSION_CHECK=0 \
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
-    SA_HOME=/data
-# ツールの場所と版（analysis_run.tool_version の出所。設定に取り込むのは各ツールを使う PR）
+    SA_HOME=/data \
+    SA_TOOLS=/opt/sa/tools.json
+# ツールの場所と版（analysis_run.tool_version の出所）。sa は SA_TOOLS が指すこのファイルからツールの場所を読む
 RUN SEMGREP_VERSION="$(semgrep --version)" \
  && printf '{\n  "codeql": { "path": "/opt/codeql/codeql", "version": "%s" },\n  "semgrep": { "path": "/opt/semgrep/bin/semgrep", "version": "%s" },\n  "jsluice": { "path": "/usr/local/bin/jsluice", "version": "%s" },\n  "node": { "version": "%s" }\n}\n' \
       "${CODEQL_VERSION}" "${SEMGREP_VERSION}" "${JSLUICE_VERSION}" "$(node --version)" > /opt/sa/tools.json \

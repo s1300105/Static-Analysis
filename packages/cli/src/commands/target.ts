@@ -12,7 +12,7 @@ import {
 } from '@sa/core';
 import { LLM_CODE_POLICIES, type LlmCodePolicy } from '@sa/types';
 import { type Command, Option } from 'commander';
-import { type CliIo, emit, withContext } from '../io';
+import { type CliIo, collect, emit, withContext } from '../io';
 
 interface ScopeOptions {
   allow?: string[];
@@ -23,8 +23,6 @@ interface ScopeOptions {
   thirdPartyCode?: 'in_scope' | 'out_of_scope' | 'report_to_vendor';
   notes?: string;
 }
-
-const collect = (value: string, previous: string[] | undefined) => [...(previous ?? []), value];
 
 function addScopeOptions(cmd: Command): Command {
   return cmd

@@ -14,3 +14,11 @@ cp -r build /tmp/wp5e && cd /tmp/wp5e
 npm install --no-save webpack@5.102.1 webpack-cli@6.0.1
 npx webpack --config webpack.config.cjs   # dist/ に出る
 ```
+
+`jsluice-urls.jsonl` は jsluice（`v0.0.0-20240110145140-0ddfab153e06`、docker/sa/Dockerfile と同じ版）の出力の記録。
+jsluice 抽出器のテストはこれを返す偽の実行ファイルで回す（`filename` は手元のパスを外してある）。
+
+```bash
+jsluice urls --include-source --placeholder EXPR "$PWD/output/main.c452f02c.js" \
+  | sed "s#\"filename\":\"$PWD/output/#\"filename\":\"#" > jsluice-urls.jsonl
+```

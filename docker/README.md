@@ -23,7 +23,8 @@
 | Go（jsluice のビルド） | 1.25.14（bookworm） | イメージのダイジェスト |
 | squid（プロキシ） | Debian 12.15 の squid パッケージ | ベースイメージのダイジェスト |
 
-イメージ内の `/opt/sa/tools.json` にツールの場所と版を書き出している（`analysis_run.tool_version` の出所。設定に取り込むのは各ツールを使う PR）。
+イメージ内の `/opt/sa/tools.json` にツールの場所と版を書き出している（`analysis_run.tool_version` の出所）。
+イメージは `SA_TOOLS=/opt/sa/tools.json` を設定しているので、`sa extract-endpoints` はここから jsluice を見つける（CodeQL・Semgrep は使う PR で読む）。
 
 ## 動かし方
 
@@ -61,7 +62,7 @@ docker/verify.sh
 ```
 
 1. 固定した版のツールが入っている
-2. `--network none` で jsluice・Semgrep（ローカルの規則）・CodeQL（DB 作成と同梱パックの `js/xss`）・`sa load` が動く
+2. `--network none` で jsluice・Semgrep（ローカルの規則）・CodeQL（DB 作成と同梱パックの `js/xss`）・`sa load`・`sa extract-endpoints`（ast_url と jsluice）が動く
 3. `--network none` のコンテナから外へ TCP で繋がらない
 4. 内部ネットワークの `sa` から、プロキシを通さずには外へ繋がらない（許可先の `api.anthropic.com` と IP の `1.1.1.1` の両方）
 5. プロキシが `api.anthropic.com:443` だけを通し、`example.com:443`・`api.anthropic.com:80` を 403 で拒否して記録する

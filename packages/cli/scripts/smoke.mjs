@@ -26,8 +26,9 @@ try {
     throw new Error(`unexpected load result: ${JSON.stringify({ unpack: r.unpack, accepted })}`);
   }
   sa('load', 'smoke', endpointsBundle, '--version-id', r.load.versionId);
-  const e = JSON.parse(sa('extract-endpoints', 'smoke'));
-  if (e.endpoints !== 10 || e.skipped !== 0) throw new Error(`unexpected extract-endpoints result: ${JSON.stringify(e)}`);
+  // jsluice は手元の設定次第なので、ここでは ast_url だけ（jsluice は Docker の verify.sh が実行イメージで確かめる）
+  const e = JSON.parse(sa('extract-endpoints', 'smoke', '--extractor', 'ast_url'));
+  if (e.endpoints !== 10 || e.extractors.ast_url?.skipped !== 0) throw new Error(`unexpected extract-endpoints result: ${JSON.stringify(e)}`);
   const b = JSON.parse(sa('backup', join(home, 'snapshot.db')));
   if (b.schemaVersion < 1) throw new Error(`unexpected backup result: ${JSON.stringify(b)}`);
   console.log(

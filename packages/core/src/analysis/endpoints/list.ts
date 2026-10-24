@@ -15,12 +15,25 @@ export interface EndpointListItem extends EndpointSummary {
 
 export interface ListEndpointsOptions {
   targetId: string;
-  /** sighting が 1 つも無い endpoint（抽出器の掛け直しで消えたもの）も返す（既定 false） */
-  includeUnseen?: boolean;
+  /**
+   * 既定では省くものも返す（既定 false）:
+   * - sighting が 1 つも無い endpoint（抽出器の掛け直しで消えたもの）
+   * - メソッド不明（''）で、同じ protocol・origin・パス・operation にメソッドの分かる endpoint があるもの
+   *   （jsluice が文字列リテラルだけで見つけたパスなど。同じ API を重ねて並べない）
+   */
+  all?: boolean;
 }
 
 export function listEndpoints(ctx: SaContext, opts: ListEndpointsOptions): EndpointListItem[] {
-  return listEndpointSummaries(ctx, opts.targetId)
-    .filter((e) => opts.includeUnseen === true || e.sightings > 0)
-    .map((e) => ({ ...e, params: endpointParams(ctx, e.id) }));
+  let rows = listEndpointSummaries(ctx, opts.targetId);
+  if (opts.all !== true) {
+    rows = rows.filter((e) => e.sightings > 0);
+    const known = new Set(rows.filter((e) => e.method !== '').map(sameApi));
+    rows = rows.filter((e) => e.method !== '' || !known.has(sameApi(e)));
+  }
+  return rows.map((e) => ({ ...e, params: endpointParams(ctx, e.id) }));
+}
+
+function sameApi(e: EndpointSummary): string {
+  return JSON.stringify([e.protocol, e.origin, e.pathNorm, e.operation]);
 }

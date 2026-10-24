@@ -77,6 +77,27 @@ export type LoadArtifactInput = z.input<typeof LoadArtifactInputSchema>;
 
 const PositiveInt = z.number().int().positive();
 
+/** 外部ツール 1 つの指定。path は絶対パスか設定ファイルからの相対。version は analysis_run.tool_version に残す */
+export const ToolConfigSchema = z
+  .object({
+    path: z.string().min(1),
+    version: z.string().min(1).optional(),
+    /** 1 ファイルあたりの上限（ミリ秒） */
+    timeoutMs: PositiveInt.optional(),
+  })
+  .strict();
+
+/** 設定で場所を渡す外部ツール（CodeQL・Semgrep は使う PR で足す） */
+export const ToolsConfigSchema = z.object({ jsluice: ToolConfigSchema.optional() }).strict();
+
+/**
+ * 実行イメージの /opt/sa/tools.json（環境変数 SA_TOOLS で指す）の形。イメージが入れたツールの場所と版。
+ * ここで使わないツールの項目もあるので、未知のキーは無視する
+ */
+export const ToolsFileSchema = z.record(
+  z.object({ path: z.string().min(1).optional(), version: z.string().min(1).optional() }).passthrough(),
+);
+
 /**
  * 設定ファイル（<home>/config.json）の形（docs/architecture.md §3.5）。すべて省略でき、省いた項目は既定値。
  * パスは設定ファイルの場所からの相対でもよい。
@@ -98,7 +119,10 @@ export const SaConfigFileSchema = z
       .optional(),
     /** sourcemap の簡易検証の一致率の閾値（0〜1） */
     mapCheckThreshold: z.number().min(0).max(1).optional(),
+    /** 外部ツールの場所（SA_TOOLS の tools.json より優先） */
+    tools: ToolsConfigSchema.optional(),
   })
   .strict();
 
 export type SaConfigFile = z.infer<typeof SaConfigFileSchema>;
+export type ToolConfigInput = z.infer<typeof ToolConfigSchema>;

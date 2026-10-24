@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -187,8 +187,9 @@ describe('sa extract-endpoints / sa endpoints', () => {
 
     const r = await sa('extract-endpoints', 'example');
     expect(r.code).toBe(0);
-    expect(r.stdout).toContain(`version ${versionId}: 1 modules, 10 calls (0 without a usable URL), 0 skipped`);
-    expect(r.stdout).toContain('10 endpoints, 10 sightings');
+    expect(r.stdout).toContain(`version ${versionId}: 10 endpoints, 10 sightings`);
+    expect(r.stdout).toContain('  ast_url: 1 inputs, 10 found, 0 dropped, 10 sightings, 0 skipped');
+    expect(r.stdout).toContain('  jsluice: not configured');
 
     const list = await sa('endpoints', 'example');
     expect(list.code).toBe(0);
@@ -226,7 +227,34 @@ describe('sa extract-endpoints / sa endpoints', () => {
     expect((await sa('extract-endpoints', 'other', '--version-id', versionId)).code).toBe(3);
     const r = await sa('--json', 'extract-endpoints', 'example', '--version-id', versionId);
     expect(r.code).toBe(0);
-    expect(r.json()).toMatchObject({ versionId, endpoints: 10, skipped: 0 });
+    expect(r.json()).toMatchObject({ versionId, endpoints: 10, extractors: { ast_url: { skipped: 0 } }, unavailable: ['jsluice'] });
+    expect((await sa('extract-endpoints', 'example', '--extractor', 'nope')).code).toBe(2);
+    const noJsluice = await sa('extract-endpoints', 'example', '--extractor', 'jsluice');
+    expect(noJsluice.code).toBe(2);
+    expect(noJsluice.stderr).toContain('jsluice is not configured');
+  });
+
+  it('runs jsluice when config.json points at it', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    // 引数の形を確かめてから、1 件だけ返す偽の jsluice
+    const bin = join(home, 'jsluice');
+    writeFileSync(
+      bin,
+      `#!${process.execPath}
+const [mode, , , , file] = process.argv.slice(2);
+if (mode !== 'urls' || !require('node:fs').existsSync(file)) process.exit(9);
+console.log(JSON.stringify({ url: '/hidden/admin', type: 'stringLiteral', source: '"/settings"' }));
+`,
+    );
+    chmodSync(bin, 0o755);
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ tools: { jsluice: { path: './jsluice', version: 'fake' } } }));
+    await sa('target', 'add', 'example');
+    await sa('load', 'example', endpointsBundle, '--collected-at', 'now');
+    const r = await sa('--json', 'extract-endpoints', 'example', '--extractor', 'jsluice');
+    expect(r.code).toBe(0);
+    expect(r.json()).toMatchObject({ endpoints: 1, extractors: { jsluice: { inputs: 1, found: 1, sightings: 1 } }, unavailable: [] });
+    expect((await sa('endpoints', 'example')).stdout).toContain('?       /hidden/admin  (scope ?; 1 sighting)');
   });
 });
 

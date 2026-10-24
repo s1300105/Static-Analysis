@@ -73,12 +73,15 @@ describe('extractEndpoints (ast_url)', () => {
     const ctx = makeCtx();
     const { targetId, versionId } = await loadVersion(ctx, [{ path: bundle }]);
     const r = await extractEndpoints(ctx, { versionId });
-    expect(r).toMatchObject({ modules: 1, calls: 10, dropped: 0, endpoints: 10, sightings: 10, skipped: 0 });
+    // jsluice は設定が無いので掛けない
+    expect(r).toMatchObject({ versionId, endpoints: 10, sightings: 10, unavailable: ['jsluice'] });
+    expect(r.extractors.ast_url).toMatchObject({ inputs: 1, found: 10, dropped: 0, sightings: 10, skipped: 0 });
+    expect(Object.keys(r.extractors)).toEqual(['ast_url']);
     expect(byKey(asExpected(ctx, targetId))).toEqual(byKey(expected.endpoints));
 
-    const run = getAnalysisRun(ctx, r.runId)!;
-    expect(run).toMatchObject({ tool: 'extract_endpoints', kind: 'engine', inputLayer: 'unpacked', filesTotal: 1, filesSkipped: 0 });
-    expect(run.toolVersion).toContain('ast_url');
+    const run = getAnalysisRun(ctx, r.extractors.ast_url!.runId)!;
+    expect(run).toMatchObject({ tool: 'extract_endpoints/ast_url', kind: 'engine', inputLayer: 'unpacked', filesTotal: 1, filesSkipped: 0 });
+    expect(run.toolVersion).toContain('@babel/parser');
     expect(run.finishedAt).not.toBeNull();
   });
 
@@ -116,10 +119,11 @@ describe('extractEndpoints (ast_url)', () => {
     upsertSighting(ctx, { endpointId: stale, versionId, locationId: loc, params: [], extractedBy: 'jsluice' });
 
     const second = await extractEndpoints(ctx, { versionId });
-    expect(second.runId).not.toBe(first.runId);
+    const secondRun = second.extractors.ast_url!.runId;
+    expect(secondRun).not.toBe(first.extractors.ast_url!.runId);
     const after = sightingRows(ctx, versionId);
     expect(after.filter((s) => s.extracted_by === 'ast_url').map(({ run_id: _run, ...rest }) => rest)).toEqual(before);
-    expect(after.filter((s) => s.extracted_by === 'ast_url').every((s) => s.run_id === second.runId)).toBe(true);
+    expect(after.filter((s) => s.extracted_by === 'ast_url').every((s) => s.run_id === secondRun)).toBe(true);
     expect(after.filter((s) => s.extracted_by === 'jsluice')).toHaveLength(1);
     // endpoint は triage を持つので消さない（sighting の無いものは既定の一覧に出さない）
     expect(listEndpoints(ctx, { targetId })).toHaveLength(11);
@@ -134,12 +138,13 @@ describe('extractEndpoints (ast_url)', () => {
     const timedOut: JobFailure = { ok: false, reason: 'timeout', detail: 'timed out', durationMs: 1 };
     const failing: SaContext = { ...ctx, jobs: { ...ctx.jobs, runWorker: () => Promise.resolve(timedOut) } };
     const r = await extractEndpoints(failing, { versionId });
-    expect(r).toMatchObject({ modules: 1, calls: 0, sightings: 0, skipped: 1 });
+    expect(r.extractors.ast_url).toMatchObject({ inputs: 1, found: 0, sightings: 0, skipped: 1 });
     const rows = sightingRows(ctx, versionId);
     expect(rows).toHaveLength(10);
-    expect(rows.every((s) => s.run_id === first.runId)).toBe(true);
-    expect(getAnalysisRun(ctx, r.runId)).toMatchObject({ filesTotal: 1, filesAnalyzed: 0, filesSkipped: 1 });
-    expect(getAnalysisRun(ctx, r.runId)!.skippedDetail?.timeout?.count).toBe(1);
+    expect(rows.every((s) => s.run_id === first.extractors.ast_url!.runId)).toBe(true);
+    const run = getAnalysisRun(ctx, r.extractors.ast_url!.runId)!;
+    expect(run).toMatchObject({ filesTotal: 1, filesAnalyzed: 0, filesSkipped: 1 });
+    expect(run.skippedDetail?.timeout?.count).toBe(1);
   });
 
   it('fills the origin of relative URLs from the pages that loaded the script', async () => {
@@ -151,7 +156,7 @@ describe('extractEndpoints (ast_url)', () => {
     );
     const r = await extractEndpoints(ctx, { versionId });
     // 相対 URL の 8 件は 2 つの origin に分かれ、絶対 URL の 2 件はそのまま
-    expect(r).toMatchObject({ calls: 10, endpoints: 18, sightings: 18 });
+    expect(r).toMatchObject({ endpoints: 18, sightings: 18, extractors: { ast_url: { found: 10 } } });
     const list = listEndpoints(ctx, { targetId });
     expect(new Set(list.map((e) => e.origin))).toEqual(
       new Set(['https://app.example.com', 'https://admin.example.com', 'https://auth.example.com', 'wss://rt.example.com']),
@@ -174,9 +179,9 @@ describe('extractEndpoints (ast_url)', () => {
     const { targetId, versionId } = await loadVersion(ctx, [...files, { path: broken }]);
     const r = await extractEndpoints(ctx, { versionId });
     // webpack のファクトリ（関数式）も読める。この fixture に HTTP の呼び出しは無い
-    expect(r).toMatchObject({ modules: 4, calls: 0, endpoints: 0, skipped: 0 });
+    expect(r).toMatchObject({ endpoints: 0, extractors: { ast_url: { inputs: 4, found: 0, skipped: 1 } } });
     expect(listEndpoints(ctx, { targetId })).toEqual([]);
-    const run = getAnalysisRun(ctx, r.runId)!;
+    const run = getAnalysisRun(ctx, r.extractors.ast_url!.runId)!;
     expect(run).toMatchObject({ filesTotal: 5, filesAnalyzed: 4, filesSkipped: 1 });
     expect(run.skippedDetail?.parse_failed?.count).toBe(1);
   });
@@ -184,14 +189,20 @@ describe('extractEndpoints (ast_url)', () => {
   it('reads the whole raw file when unpack has not run', async () => {
     const ctx = makeCtx();
     const { targetId, versionId } = await loadVersion(ctx, [{ path: bundle }], { unpack: false });
-    expect(await extractEndpoints(ctx, { versionId })).toMatchObject({ modules: 1, endpoints: 10 });
+    expect(await extractEndpoints(ctx, { versionId })).toMatchObject({ endpoints: 10, extractors: { ast_url: { inputs: 1 } } });
     expect(byKey(asExpected(ctx, targetId))).toEqual(byKey(expected.endpoints));
   });
 
-  it('rejects an unknown version', async () => {
+  it('rejects an unknown version, an unknown extractor and an unconfigured jsluice', async () => {
     const ctx = makeCtx();
-    const err = await extractEndpoints(ctx, { versionId: 'nope' }).catch((e: unknown) => e);
-    expect(err).toMatchObject({ code: 'NOT_FOUND' });
+    const err = (p: Promise<unknown>) => p.catch((e: unknown) => e);
+    expect(await err(extractEndpoints(ctx, { versionId: 'nope' }))).toMatchObject({ code: 'NOT_FOUND' });
+    const { versionId } = await loadVersion(ctx, [{ path: bundle }]);
+    expect(await err(extractEndpoints(ctx, { versionId, extractors: ['nope' as 'ast_url'] }))).toMatchObject({ code: 'INVALID_INPUT' });
+    expect(await err(extractEndpoints(ctx, { versionId, extractors: ['jsluice'] }))).toMatchObject({
+      code: 'INVALID_INPUT',
+      message: expect.stringContaining('not configured'),
+    });
   });
 });
 
