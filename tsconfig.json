@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "types": ["node"],
+    "paths": {
+      "@sa/types": ["packages/types/src/index.ts"],
+      "@sa/core": ["packages/core/src/index.ts"],
+      "@sa/cli": ["packages/cli/src/index.ts"],
+      "@sa/mcp": ["packages/mcp/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts"]
+}
