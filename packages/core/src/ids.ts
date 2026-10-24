@@ -14,3 +14,10 @@ export function newId(): string {
 export function nowIso(): string {
   return new Date().toISOString();
 }
+
+const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
+/** newId() が作る形（Crockford base32 の 26 文字）か。パスに埋める ID の検査に使う（原則8） */
+export function isUlid(s: string): boolean {
+  return ULID_RE.test(s);
+}

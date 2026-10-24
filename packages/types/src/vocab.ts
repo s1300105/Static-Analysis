@@ -125,3 +125,25 @@ export const FACT_META: Record<FactType, FactMeta> = {
 export function polarityOf(factType: FactType): Polarity {
   return FACT_META[factType].polarity;
 }
+
+// --- 成果物ファイルの種別（artifact_file.kind。design.md §6.1。HAR は保存しない） ---
+export const ARTIFACT_KINDS = ['js', 'sourcemap', 'html'] as const;
+export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
+
+// --- 実行記録の種別（analysis_run.kind。design.md §6.1） ---
+export const RUN_KINDS = ['engine', 'llm', 'ingest'] as const;
+export type RunKind = (typeof RUN_KINDS)[number];
+
+// --- スキップの理由（analysis_run.skipped_detail のキー。design.md §6.6「ツールが黙って読み飛ばす罠」） ---
+export const SKIP_REASONS = [
+  'parse_failed', // Babel 等のパース失敗。raw 層だけ残す
+  'timeout', // worker / 子プロセスの wall-clock タイムアウト
+  'oom', // worker のメモリ上限
+  'tool_error', // 外部ツール・worker の異常終了、未分類の失敗
+  'extraction_error', // CodeQL の抽出エラーと「投入予定と抽出済みの差分」
+  'unresolved_require', // relink で解決できなかった n(<id>)
+  'minified_excluded', // ツールが minified と見なして除外したもの
+  'path_excluded', // パスの規則で除外したもの（node_modules 既定除外、正規化できない sources 名など）
+  'unmapped', // raw へ正確に戻せなかった位置
+] as const;
+export type SkipReason = (typeof SKIP_REASONS)[number];

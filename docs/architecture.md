@@ -109,10 +109,11 @@ packages/core/src/
 │  ├─ blob.ts        content_hash による blob 保存・重複排除・読み出し
 │  └─ backup.ts      VACUUM INTO / .backup
 ├─ jobs/
-│  ├─ runner.ts      JobRunner: runWorker() / runChild()（上限・タイムアウト・スキップ記録）
+│  ├─ runner.ts      JobRunner: runWorker() / runChild()（上限・タイムアウト）
+│  ├─ skips.ts       SkipLog（理由別のスキップ記録 → analysis_run.skipped_detail）
 │  └─ workers/       babel.worker.ts など（worker_threads のエントリ）
 ├─ policy/
-│  ├─ paths.ts       generateWorkPath() / assertWithinWorkspace()（原則8）
+│  ├─ paths.ts       generateWorkPath() / generateOriginalSourcePath() / assertWithinWorkspace() / writeWorkFile()（原則8）
 │  ├─ llm.ts         enforceLlmCodePolicy()（コード本文を返す出口で検査）
 │  └─ transitions.ts 状態遷移の権限表（誰がどの state 遷移を許されるか）
 ├─ artifact/         load / unpack / relink / pretty / sourcemap / chunks / har
@@ -187,17 +188,27 @@ export interface JobRunner {
   runChild(spec: ChildSpec): Promise<JobResult<ChildOutput>>;
 }
 export interface WorkerLimits { maxOldGenMb: number; stackSizeMb: number; timeoutMs: number; }
-export interface ChildSpec { bin: string; args: string[]; cwd: string; env: Record<string,string>; timeoutMs: number; }
+export interface ChildSpec {
+  bin: string; args: string[]; cwd: string; env: Record<string,string>; timeoutMs: number;
+  okExitCodes?: number[]; maxOutputBytes?: number;
+}
 export type JobResult<O> =
   | { ok: true; value: O; durationMs: number }
-  | { ok: false; reason: SkipReason; detail: string };   // 呼び出し側が analysis_run に記録
-export type SkipReason =
-  | 'parse_failed' | 'timeout' | 'oom' | 'extraction_error' | 'unresolved_require' | 'minified_excluded' | 'tool_error';
+  | { ok: false; reason: SkipReason; detail: string; durationMs: number };   // 呼び出し側が SkipLog に積み analysis_run に記録
+// SkipReason / SkippedDetail は採点（@sa/eval）も読むので @sa/types に置く（SKIP_REASONS）:
+//   parse_failed / timeout / oom / tool_error / extraction_error / unresolved_require / minified_excluded / path_excluded / unmapped
 ```
 
 - worker は `worker_threads`、`resourceLimits`（`maxOldGenerationSizeMb` 等）＋`stackSizeMb`（例 64）。
-- 子プロセスはタイムアウトで `SIGKILL`。stdout/stderr を捕捉。exit code と errors JSON を解釈してスキップに写す。
-- 中間結果（AST など）は content_hash をキーにディスクにキャッシュし、再起動後に作り直さない。
+  `WorkerSpec` は「入力を受けて結果を返す関数を default export する ES モジュール」の file: URL。起動コードは文字列（eval）で持ち、src と dist で置き場所を変えない。
+  スキップ理由を指定して失敗させるときは worker 内で `JobSkipError` を投げる。worker には親の環境変数を渡さない（衛生のため。同一プロセスなので境界ではない）。
+- 子プロセスは新しいプロセスグループで起動し、タイムアウトでグループごと `SIGKILL`（CodeQL の java など孫まで止める）。終了後に残った孫も止める。
+  env は明示したものだけ（親の環境を引き継がない）、`bin` と `cwd` は絶対パス。stdout/stderr を上限付きで捕捉。
+  exit code は `okExitCodes` で判定し、ツール固有の errors JSON の解釈は呼び出し側でスキップに写す。
+- 同時実行数は worker・子プロセスそれぞれ上限を持ち、タイムアウトは実行枠を得てから数える。
+- 失敗・タイムアウトは throw せず `JobResult` で返す（throw は引数の誤りだけ）。`SkipLog`（`jobs/skips.ts`）に積み、
+  `finishAnalysisRun`（`db/repo/analysisRun.ts`）で `files_skipped` と `skipped_detail` に書く。明細は理由ごとに上限件まで、総数は必ず残す。
+- 中間結果（AST など）は content_hash をキーにディスクにキャッシュし、再起動後に作り直さない（worker を使う最初の PR で入れる）。
 
 ### 3.5 設定（`SaConfig`）
 

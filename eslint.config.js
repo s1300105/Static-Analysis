@@ -21,4 +21,9 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     },
   },
+  {
+    // テスト用の worker モジュール（ビルドせず Node がそのまま読む素の ESM）
+    files: ['packages/*/test/fixtures/**/*.mjs'],
+    languageOptions: { globals: { process: 'readonly', setTimeout: 'readonly' } },
+  },
 );
