@@ -170,6 +170,65 @@ export function unlocatedSightingParams(
   return row ? ((row.params === null ? [] : JSON.parse(row.params)) as EndpointParam[]) : undefined;
 }
 
+/** 人間の判断（triage）と、その時点のパラメータの集合のハッシュを書く。行が無ければ false */
+export function setEndpointTriage(ctx: HasDb, endpointId: string, triage: EndpointTriage, paramsHash: string): boolean {
+  return (
+    dbCall(
+      () =>
+        ctx.db
+          .prepare('UPDATE api_endpoint SET triage = ?, triaged_params_hash = ? WHERE id = ?')
+          .run(triage, paramsHash, endpointId).changes,
+    ) > 0
+  );
+}
+
+/** 版ごとの、位置のある（静的な抽出器の）sighting。diff_versions が使う */
+export interface StaticSighting {
+  endpointId: string;
+  params: EndpointParam[];
+  /** sighting の raw の chunk_key（push のチャンク ID。カンマ区切り）。無ければ null */
+  chunkKey: string | null;
+}
+
+export function listStaticSightings(ctx: HasDb, versionId: string): StaticSighting[] {
+  const rows = dbCall(
+    () =>
+      ctx.db
+        .prepare(
+          `SELECT s.endpoint_id AS endpointId, s.params AS params, f.chunk_key AS chunkKey
+           FROM endpoint_sighting s
+           JOIN code_location l ON l.id = s.location_id
+           JOIN artifact_file f ON f.id = l.raw_file_id
+           WHERE s.version_id = ? AND s.extracted_by <> 'har'
+           ORDER BY s.endpoint_id, s.id`,
+        )
+        .all(versionId) as { endpointId: string; params: string | null; chunkKey: string | null }[],
+  );
+  return rows.map((r) => ({
+    endpointId: r.endpointId,
+    params: r.params === null ? [] : (JSON.parse(r.params) as EndpointParam[]),
+    chunkKey: r.chunkKey,
+  }));
+}
+
+/** endpoint ごとの、静的な抽出器が最初に見つけた版の取得日時（HAR を除く） */
+export function firstStaticSeen(ctx: HasDb, targetId: string): Map<string, string> {
+  const rows = dbCall(
+    () =>
+      ctx.db
+        .prepare(
+          `SELECT s.endpoint_id AS endpointId, min(v.collected_at) AS firstSeen
+           FROM endpoint_sighting s
+           JOIN api_endpoint e ON e.id = s.endpoint_id
+           JOIN artifact_version v ON v.id = s.version_id
+           WHERE e.target_id = ? AND s.extracted_by <> 'har'
+           GROUP BY s.endpoint_id`,
+        )
+        .all(targetId) as { endpointId: string; firstSeen: string }[],
+  );
+  return new Map(rows.map((r) => [r.endpointId, r.firstSeen]));
+}
+
 /** 版に sighting がある GraphQL のエンドポイント（operation の無い、送信先そのもの）の origin とパス */
 export function graphqlTransports(ctx: HasDb, versionId: string): { origin: string; pathNorm: string }[] {
   return dbCall(

@@ -369,7 +369,10 @@ detectStack(ctx, { versionId }): DetectedLibrary[];                             
 extractEndpoints(ctx, { versionId, extractors? /* ast_url / jsluice / graphql */ })
   : Promise<{ versionId; extractors: { [name]: { runId; inputs; found; dropped; sightings; skipped } }; unavailable; endpoints; sightings }>; // ○ 手順2
 listEndpoints(ctx, { targetId, all? }): EndpointListItem[];  // VIEW の派生値＋パラメータの和集合                  // ○読 手順2
-diffVersions(ctx, { versionId, baseVersionId }): DiffResult;                                                    // ○  手順2/6
+diffVersions(ctx, { versionId, baseVersionId? })
+  : Promise<{ added; removed; newParams; uncollected: { added; removed } }>;                                     // ○  手順2/6
+rankEndpoints(ctx, { targetId, all? }): RankedEndpoint[];  // 決定的な並び順と当たった規則、triage 待ち          // ○読 手順2
+triageEndpoint(ctx, { targetId, endpointId, triage }): void;  // 人間だけ（caller=cli）                            // ×  手順2
 exportEndpoints(ctx, { targetId, filter }): { openapi?: object; graphql?: string };                            // ×  手順2
 taintPaths(ctx, { versionId, classes }): { candidates: number; clientEntries: number; skipped: SkipDetail };   // ○  手順4/7
 checkOriginValidation(ctx, { versionId }): OriginFinding[];                                                     // ○  手順4
@@ -406,6 +409,14 @@ E1 の取り決め（PR-7・PR-8）:
   - endpoint: protocol は graphql、method は operation の種類（QUERY / MUTATION / SUBSCRIPTION）、operation は名前（無名は ''）、
     パラメータは変数（graphql_var）。送信先は版の GraphQL のエンドポイント（operation の無いもの）のパスが 1 つに決まればそれ（origin が複数ならそれぞれ）、
     決まらなければ origin・パスとも ''。operation の文書（本文）は保存せず、`export_endpoints`（PR-13）が位置から読み直す
+- diff_versions（PR-13a。`analysis/endpoints/diff.ts`）: 静的な抽出器の sighting だけで比べる（HAR は人間が触った範囲の観測なので入れない）。
+  新規・削除・既存の endpoint の新しいパラメータを出し、差分の sighting がすべて「もう一方の版で参照されているのに取得していないチャンク」
+  （find_missing_chunks で両方の版を作り直して見る）にあるものは「未収集による差」として別枠にする。チャンクを持たないファイル（エントリ）は
+  どちらの版でも取得済みとみなす。基準の版は指定、`base_version_id`、直前の版の順
+- 並び順（PR-13a。`analysis/endpoints/triage.ts`）: triage 待ち（untested か、triage の後にパラメータの集合のハッシュが変わったもの）を先に、
+  次に design.md §7.3 の 5 規則（最新版で初出・HAR で未観測・状態を変えるメソッド（GraphQL の MUTATION を含む）・ui_guard が管理者・
+  ID らしいパラメータ（名前か、パスの `{}`））を順に見て、当たった規則を `rules` に併記する。「最新版で初出」は静的な抽出器が最初に
+  見つけた版で決める。triage は CLI だけが書き、`triaged_params_hash` にその時点のパラメータの集合のハッシュを残す
 - jsluice（PR-9）は raw ファイルごとに子プロセスで掛ける（tree-sitter なので Babel が読めなかったファイルも読む）。出力の癖を直す:
   同じ式の重複（method の有無だけ違う）は 1 つにまとめ、報告済みの呼び出しの範囲に入る文字列リテラルは捨て、`x.get(...)` などの
   method は `type` から補い、送信部（ast_url と同じ規則）と文字列リテラルだけの静的ファイルのパスは捨てる。
@@ -459,7 +470,7 @@ sa-core の関数に 1:1 で薄く割り当てる。`caller='cli'`。判定・�
 |---|---|---|
 | `sa target add` / `list` / `show` / `set-scope` | createTarget / listTargets / describeTarget / updateTargetScope（scope・llm_code_policy） | 1 |
 | `sa load`（取り込み → unpack → sourcemap）/ `sa import-har` | ingestArtifacts（loadArtifact → unpackBundle → importSourcemap）/ ingestHar（importHar → 同じ流れ） | 1/2 |
-| `sa extract-endpoints` / `sa endpoints` / `sa diff` / `sa export-endpoints` / `sa triage-endpoint` | extractEndpoints / listEndpoints / diffVersions / exportEndpoints / endpoint triage | 2 |
+| `sa extract-endpoints` / `sa endpoints`（並び順・`*` は triage 待ち・`!` はパラメータが増えた）/ `sa diff` / `sa export-endpoints` / `sa triage-endpoint` | extractEndpoints / rankEndpoints / diffVersions / exportEndpoints / triageEndpoint | 2 |
 | `sa missing-chunks`（`--unavailable <key>` で取れなかった印） | findMissingChunks / markChunkUnavailable | 2 |
 | `sa analyze`（detect-stack→relink→taint→triage の一括 or 個別） | detectStack / relinkBundle / taintPaths / applyTriage | 4 |
 | `sa plan` | exportTestPlan | 5 |
@@ -573,7 +584,8 @@ M2（第1段 E1。計画書 M2）の PR 単位:
     （webpack のランタイムに埋め込まれたエントリを落としていた）。
 11. **PR-11 `import_har`**: 許可リスト抽出（HAR を保存しない・値を残さないテスト）、`page_context`、`extracted_by='har'` の sighting。
 12. **PR-12 `find_missing_chunks`**: チャンクマップ・動的 import・`sourceMappingURL`・`*.LICENSE.txt`、対象外ホストの区別。
-13. **PR-13 `diff_versions`・並び順・`export_endpoints`・triage**: 版間差分（未収集による差を別枠）、決定的な並び順、OpenAPI 3 / GraphQL 文書、`sa triage-endpoint`。
+13. **PR-13a `diff_versions`・並び順・triage**: 版間差分（未収集による差を別枠）、決定的な並び順、`sa diff` / `sa triage-endpoint`。
+    **PR-13b `export_endpoints`**: OpenAPI 3（servers に origin）/ GraphQL の operation 文書、スコープ外は既定で出さない。
 14. **PR-14 sa-mcp の最小版**: `extract_endpoints` / `diff_versions` / `find_missing_chunks` を読み取りとして公開。
 15. **PR-15 手順6の前提確認**: 実デプロイ 2 版で関数の exact / fuzzy / 不一致の割合を記録するスクリプト。
 

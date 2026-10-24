@@ -1,18 +1,25 @@
 /**
- * sa extract-endpoints / sa endpoints: JS からエンドポイントを抽出し、一覧を出す（design.md §7.3 extract_endpoints、計画書 M2）。
- * 並び順の規則・版間差分・OpenAPI の出力は sa diff / sa export-endpoints（PR-13）で足す。
+ * sa extract-endpoints / sa endpoints / sa diff / sa triage-endpoint（design.md §7.3、計画書 M2）:
+ * JS からエンドポイントを抽出し、決定的な並び順で一覧し、版間の差分を出し、人間の triage を記録する。
  */
 import {
   CODE_EXTRACTORS,
   type CodeExtractor,
-  type EndpointListItem,
+  type DiffResult,
+  type EndpointChange,
+  type EndpointSummary,
   type ExtractEndpointsResult,
+  type OrderRule,
+  type RankedEndpoint,
   SaError,
+  diffVersions,
   extractEndpoints,
   findTarget,
   findVersion,
-  listEndpoints,
+  rankEndpoints,
+  triageEndpoint,
 } from '@sa/core';
+import { ENDPOINT_TRIAGES, type EndpointParam, type EndpointTriage } from '@sa/types';
 import type { Command } from 'commander';
 import { type CliIo, collect, emit, withContext } from '../io';
 
@@ -34,14 +41,39 @@ export function registerEndpointCommands(program: Command, io: CliIo): void {
 
   program
     .command('endpoints')
-    .description('対象のエンドポイントを一覧する（パラメータの和集合・スコープ・sighting の数）')
+    .description('対象のエンドポイントを決定的な並び順で一覧する（* は triage 待ち、! は triage の後にパラメータが増えたもの）')
     .argument('<target>', '対象の ID か名前')
     .option('--all', '既定で省くもの（sighting が無くなったもの、同じパスにメソッドの分かるものがあるメソッド不明のもの）も出す')
     .action(async (targetRef: string, opts: { all?: boolean }, cmd: Command) => {
-      const list = await withContext(cmd, io, (ctx) =>
-        listEndpoints(ctx, { targetId: findTarget(ctx, targetRef).id, all: opts.all === true }),
+      const list = await withContext(cmd, io, (ctx) => rankEndpoints(ctx, { targetId: findTarget(ctx, targetRef).id, all: opts.all === true }));
+      emit(cmd, io, list, () => (list.length === 0 ? ['no endpoints (run sa extract-endpoints first)'] : list.map(rankedLine)));
+    });
+
+  program
+    .command('diff')
+    .description('2 つの版のエンドポイントの差分（新規・削除・新しいパラメータ、未取得のチャンクによる差は別枠）')
+    .argument('<target>', '対象の ID か名前')
+    .option('--version-id <id>', '新しい側の版（既定: 取得日時が最も新しい版）')
+    .option('--base-version-id <id>', '基準の版（既定: 版の base_version_id か、その直前の版）')
+    .action(async (targetRef: string, opts: { versionId?: string; baseVersionId?: string }, cmd: Command) => {
+      const d = await withContext(cmd, io, (ctx) => {
+        const version = findVersion(ctx, findTarget(ctx, targetRef).id, opts.versionId);
+        return diffVersions(ctx, { versionId: version.id, ...(opts.baseVersionId !== undefined && { baseVersionId: opts.baseVersionId }) });
+      });
+      emit(cmd, io, d, () => diffLines(d));
+    });
+
+  program
+    .command('triage-endpoint')
+    .description(`エンドポイントに人間の判断を付ける（${ENDPOINT_TRIAGES.join(' / ')}）。後でパラメータが増えると再び triage 待ちになる`)
+    .argument('<target>', '対象の ID か名前')
+    .argument('<endpoint-id>', 'sa endpoints の行末の ID')
+    .argument('<triage>', ENDPOINT_TRIAGES.join(' / '))
+    .action(async (targetRef: string, endpointId: string, triage: string, _opts: unknown, cmd: Command) => {
+      const r = await withContext(cmd, io, (ctx) =>
+        triageEndpoint(ctx, { targetId: findTarget(ctx, targetRef).id, endpointId, triage: triage as EndpointTriage }),
       );
-      emit(cmd, io, list, () => (list.length === 0 ? ['no endpoints (run sa extract-endpoints first)'] : list.map(endpointLine)));
+      emit(cmd, io, r, () => [`${r.endpointId}: ${r.triage}`]);
     });
 }
 
@@ -65,13 +97,43 @@ function extractSummary(r: ExtractEndpointsResult): string[] {
   return lines;
 }
 
+const RULE_TAGS: Record<OrderRule, string> = {
+  new_in_latest: 'new',
+  not_in_har: 'no-har',
+  state_changing: 'write',
+  admin_guard: 'admin',
+  id_param: 'id',
+};
+
+/** 並び順の 1 行: triage の印・エンドポイント・当たった規則・ID */
+function rankedLine(e: RankedEndpoint): string {
+  const mark = e.paramsChangedSinceTriage ? '!' : e.needsTriage ? '*' : ' ';
+  const rules = e.rules.map((r) => RULE_TAGS[r]).join(',');
+  return `${mark} ${endpointLine(e, e.params)}${rules ? `  {${rules}}` : ''}  ${e.id}`;
+}
+
 /** 1 行: メソッド（GraphQL は protocol と operation の種類）・送信先・operation 名・persisted query の id・パラメータ・スコープ */
-function endpointLine(e: EndpointListItem): string {
+function endpointLine(e: EndpointSummary, params: EndpointParam[]): string {
   const head = e.protocol === 'rest' ? (e.method || '?').padEnd(7) : `${e.protocol} ${e.method}`.trim().padEnd(7);
   const target = `${e.origin}${e.pathTemplate ?? e.pathNorm}` || '?';
   const operation = `${e.operation ? ` ${e.operation}` : ''}${e.persistedHash ? ` #${e.persistedHash.slice(0, 12)}` : ''}`;
-  const params = e.params.map((p) => `${p.in}:${p.name}`).join(' ');
+  const p = params.map((x) => `${x.in}:${x.name}`).join(' ');
   const scope = e.inScope === null ? 'scope ?' : e.inScope ? 'in scope' : 'OUT OF SCOPE';
   const seen = `${e.sightings} sighting${e.sightings === 1 ? '' : 's'}${e.observedInHar ? ', seen in HAR' : ''}`;
-  return `${head} ${target}${operation}${params ? `  [${params}]` : ''}  (${scope}; ${seen})`;
+  return `${head} ${target}${operation}${p ? `  [${p}]` : ''}  (${scope}; ${seen})`;
+}
+
+function diffLines(d: DiffResult): string[] {
+  const change = (c: EndpointChange) => `  ${endpointLine(c.endpoint, c.params)}  chunks ${c.chunks.join(',')}`;
+  const section = (title: string, xs: EndpointChange[]) => (xs.length === 0 ? [] : [`${title} (${xs.length}):`, ...xs.map(change)]);
+  return [
+    `version ${d.versionId} against ${d.baseVersionId}`,
+    ...section('added', d.added),
+    ...section('removed', d.removed),
+    ...(d.newParams.length === 0
+      ? []
+      : [`new parameters (${d.newParams.length}):`, ...d.newParams.map((n) => `  ${endpointLine(n.endpoint, n.params)}`)]),
+    ...section('added in chunks the base version did not fetch', d.uncollected.added),
+    ...section('removed in chunks this version did not fetch', d.uncollected.removed),
+  ];
 }

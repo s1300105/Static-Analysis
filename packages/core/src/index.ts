@@ -89,6 +89,15 @@ export {
 } from './analysis/endpoints/extract';
 export { listEndpoints, type EndpointListItem, type EndpointSummary, type ListEndpointsOptions } from './analysis/endpoints/list';
 export type { HarMatchResult } from './analysis/endpoints/har';
+export { diffVersions, type DiffResult, type EndpointChange } from './analysis/endpoints/diff';
+export {
+  ORDER_RULES,
+  paramsHash,
+  rankEndpoints,
+  triageEndpoint,
+  type OrderRule,
+  type RankedEndpoint,
+} from './analysis/endpoints/triage';
 export { normalizeEndpointUrl, type NormalizedEndpoint } from './analysis/endpoints/normalize';
 
 export { CORE_VERSION } from './version';

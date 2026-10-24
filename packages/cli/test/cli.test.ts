@@ -35,6 +35,11 @@ function cli(home: string) {
   };
 }
 
+/** どれかの行が fragment を含む */
+function expectLine(lines: string[], fragment: string): void {
+  expect(lines.filter((l) => l.includes(fragment)), fragment).toHaveLength(1);
+}
+
 const evidence = ['--policy-confirmed-at', '2026-10-20', '--policy-source', 'https://hackerone.com/example/policy'];
 
 describe('sa', () => {
@@ -43,7 +48,7 @@ describe('sa', () => {
     expect(await sa('--version')).toMatchObject({ code: 0, stdout: `${CLI_VERSION}\n` });
     const help = await sa('--help');
     expect(help.code).toBe(0);
-    for (const c of ['target', 'load', 'import-har', 'missing-chunks', 'extract-endpoints', 'endpoints', 'backup']) {
+    for (const c of ['target', 'load', 'import-har', 'missing-chunks', 'extract-endpoints', 'endpoints', 'diff', 'triage-endpoint', 'backup']) {
       expect(help.stdout).toContain(c);
     }
   });
@@ -198,11 +203,14 @@ describe('sa extract-endpoints / sa endpoints', () => {
     expect(list.code).toBe(0);
     const lines = list.stdout.trim().split('\n');
     expect(lines).toHaveLength(10);
-    expect(lines).toContain('GET     https://app.example.com/api/v2/users/:param  [query:include]  (in scope; 1 sighting)');
-    expect(lines).toContain(
+    expectLine(lines, '* GET     https://app.example.com/api/v2/users/:param  [query:include]  (in scope; 1 sighting)  {new,no-har,id}  ');
+    expectLine(
+      lines,
       'POST    https://auth.example.com/oauth/token  [body:grant_type body:password body:username header:Content-Type header:X-Client-Version]  (OUT OF SCOPE; 1 sighting)',
     );
-    expect(lines).toContain('websocket wss://rt.example.com/socket  (in scope; 1 sighting)');
+    expectLine(lines, 'websocket wss://rt.example.com/socket  (in scope; 1 sighting)');
+    // 並び順: 状態を変えるメソッドと ID らしいパラメータを含むものが先
+    expect(lines[0]).toMatch(/^\* DELETE {2}https:\/\/app\.example\.com\/api\/v2\/docs\/:param .*\{new,no-har,write,id\} {2}\w{26}$/);
 
     const json = await sa('--json', 'endpoints', 'example');
     expect(json.json<unknown[]>()).toHaveLength(10);
@@ -245,11 +253,12 @@ describe('sa extract-endpoints / sa endpoints', () => {
     expect(r.stdout).toContain('  graphql: 1 inputs, 7 found, 0 dropped, 7 sightings, 0 skipped');
     const lines = (await sa('endpoints', 'example')).stdout.trim().split('\n');
     expect(lines).toHaveLength(8);
-    expect(lines).toContain('graphql POST /graphql  [header:Content-Type]  (scope ?; 1 sighting)');
-    expect(lines).toContain(
+    expectLine(lines, 'graphql POST /graphql  [header:Content-Type]  (scope ?; 1 sighting)');
+    expectLine(
+      lines,
       'graphql QUERY /graphql UserProfileQuery #7f3a9c2e1b4d  [graphql_var:userId graphql_var:withPosts]  (scope ?; 1 sighting)',
     );
-    expect(lines).toContain('graphql MUTATION /graphql DeletePost  [graphql_var:id graphql_var:reason]  (scope ?; 1 sighting)');
+    expectLine(lines, 'graphql MUTATION /graphql DeletePost  [graphql_var:id graphql_var:reason]  (scope ?; 1 sighting)  {no-har,write,id}');
   });
 
   it('runs jsluice when config.json points at it', async () => {
@@ -273,6 +282,44 @@ console.log(JSON.stringify({ url: '/hidden/admin', type: 'stringLiteral', source
     expect(r.code).toBe(0);
     expect(r.json()).toMatchObject({ endpoints: 1, extractors: { jsluice: { inputs: 1, found: 1, sightings: 1 } }, unavailable: [] });
     expect((await sa('endpoints', 'example')).stdout).toContain('?       /hidden/admin  (scope ?; 1 sighting)');
+  });
+});
+
+describe('sa diff / sa triage-endpoint', () => {
+  it('shows what changed between versions and records human triage', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    await sa('target', 'add', 'example');
+    writeFileSync(join(home, 'v1.js'), 'fetch("/api/items?page=1"); fetch("/api/old");');
+    writeFileSync(join(home, 'v2.js'), 'fetch("/api/items?page=1&sort=x"); fetch("/api/new", { method: "POST" });');
+    await sa('load', 'example', 'v1.js', '--collected-at', '2026-09-01T00:00:00Z');
+    await sa('extract-endpoints', 'example');
+    await sa('load', 'example', 'v2.js', '--collected-at', '2026-10-01T00:00:00Z');
+    await sa('extract-endpoints', 'example');
+
+    const d = await sa('diff', 'example');
+    expect(d.code).toBe(0);
+    const lines = d.stdout.trim().split('\n');
+    expect(lines[0]).toMatch(/^version \w{26} against \w{26}$/);
+    expect(lines.slice(1)).toEqual([
+      'added (1):',
+      '  POST    /api/new  (scope ?; 1 sighting)  chunks entry',
+      'removed (1):',
+      '  GET     /api/old  (scope ?; 1 sighting)  chunks entry',
+      'new parameters (1):',
+      '  GET     /api/items  [query:sort]  (scope ?; 2 sightings)',
+    ]);
+
+    const ranked = (await sa('--json', 'endpoints', 'example')).json<{ id: string; pathNorm: string; needsTriage: boolean }[]>();
+    const newOne = ranked.find((e) => e.pathNorm === '/api/new')!;
+    expect(newOne.needsTriage).toBe(true);
+    const t = await sa('triage-endpoint', 'example', newOne.id, 'interesting');
+    expect(t.stdout).toBe(`${newOne.id}: interesting\n`);
+    const after = (await sa('endpoints', 'example')).stdout.trim().split('\n');
+    // triage 済みは印が無く、最後に回る
+    expect(after.at(-1)).toMatch(new RegExp(`^ {2}POST {4}/api/new .*${newOne.id}$`));
+    expect((await sa('triage-endpoint', 'example', newOne.id, 'maybe')).code).toBe(2);
+    expect((await sa('triage-endpoint', 'example', 'nope', 'ignore')).code).toBe(3);
   });
 });
 
