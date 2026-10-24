@@ -1,0 +1,1 @@
+{"version":3,"file":"settings.f61ce08e.chunk.js","mappings":"sIAAe,SAAAA,IACf,OAAAC,MAAA,gBACA","sources":["webpack://sa-fixture-webpack5-chunks/./src/settings.js"],"sourcesContent":["export default function settings() {\n  return fetch('/api/settings');\n}\n"],"names":["settings","fetch"],"sourceRoot":""}

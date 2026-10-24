@@ -1,0 +1,1 @@
+{"version":3,"file":"admin.3be16cd6.chunk.js","mappings":"sIAAe,SAAAA,IACf,OAAAC,MAAA,mBACA","sources":["webpack://sa-fixture-webpack5-chunks/./src/admin.js"],"sourcesContent":["export default function admin() {\n  return fetch('/api/admin/users');\n}\n"],"names":["admin","fetch"],"sourceRoot":""}

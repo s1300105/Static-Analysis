@@ -43,7 +43,9 @@ describe('sa', () => {
     expect(await sa('--version')).toMatchObject({ code: 0, stdout: `${CLI_VERSION}\n` });
     const help = await sa('--help');
     expect(help.code).toBe(0);
-    for (const c of ['target', 'load', 'import-har', 'extract-endpoints', 'endpoints', 'backup']) expect(help.stdout).toContain(c);
+    for (const c of ['target', 'load', 'import-har', 'missing-chunks', 'extract-endpoints', 'endpoints', 'backup']) {
+      expect(help.stdout).toContain(c);
+    }
   });
 
   it('rejects unknown commands and options as usage errors', async () => {
@@ -330,6 +332,33 @@ describe('sa import-har', () => {
     const bad = await sa('import-har', 'example', endpointsBundle);
     expect(bad.code).toBe(2);
     expect(bad.stderr).toContain('not a HAR file');
+  });
+});
+
+describe('sa missing-chunks', () => {
+  it('lists what the loaded runtime refers to and records chunks a human could not fetch', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    await sa('target', 'add', 'example', '--allow', 'cdn.example.com');
+    const out = new URL('../../core/test/fixtures/webpack5-chunks/output/', import.meta.url).pathname;
+    writeFileSync(
+      join(home, 'manifest.json'),
+      JSON.stringify([{ path: join(out, 'main.f21b19c3.js'), sourceUrls: ['https://cdn.example.com/assets/main.f21b19c3.js'] }]),
+    );
+    await sa('load', 'example', '--manifest', 'manifest.json', '--collected-at', 'now');
+
+    const r = await sa('missing-chunks', 'example', '--unavailable', '884');
+    expect(r.code).toBe(0);
+    const lines = r.stdout.trim().split('\n');
+    expect(lines[0]).toMatch(/^version \w+: 6 references, 5 missing, 1 unavailable, 0 fetched \(run \w+\)$/);
+    expect(lines).toContain('unavailable chunk         884  https://cdn.example.com/assets/admin.3be16cd6.chunk.js  (in scope)');
+    expect(lines).toContain('missing     import        https://widgets.thirdparty.example/w.js  (OUT OF SCOPE)');
+    // 印は掛け直しても残る
+    const again = await sa('--json', 'missing-chunks', 'example');
+    expect(again.json<{ chunks: { chunkKey: string; status: string }[] }>().chunks.find((c) => c.chunkKey === '884')).toMatchObject({
+      status: 'unavailable',
+    });
+    expect((await sa('missing-chunks', 'example', '--unavailable', 'nope')).code).toBe(3);
   });
 });
 

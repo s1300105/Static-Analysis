@@ -1,5 +1,6 @@
 import { Command, CommanderError } from 'commander';
 import { registerBackupCommand } from './commands/backup';
+import { registerMissingChunksCommand } from './commands/chunks';
 import { registerEndpointCommands } from './commands/endpoints';
 import { registerImportHarCommand } from './commands/har';
 import { registerLoadCommand } from './commands/load';
@@ -31,6 +32,7 @@ export function buildProgram(io: CliIo): Command {
   registerTargetCommands(program, io);
   registerLoadCommand(program, io);
   registerImportHarCommand(program, io);
+  registerMissingChunksCommand(program, io);
   registerEndpointCommands(program, io);
   registerBackupCommand(program, io);
   return program;

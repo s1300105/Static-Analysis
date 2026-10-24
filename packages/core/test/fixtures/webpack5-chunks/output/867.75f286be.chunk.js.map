@@ -1,0 +1,1 @@
+{"version":3,"file":"867.75f286be.chunk.js","mappings":"sIAAO,SAAAA,IACP,OAAAC,MAAA,uBAAwCC,OAAA,QACxC","sources":["webpack://sa-fixture-webpack5-chunks/./src/reports.js"],"sourcesContent":["export function run() {\n  return fetch('/api/reports/export', { method: 'POST' });\n}\n"],"names":["run","fetch","method"],"sourceRoot":""}

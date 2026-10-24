@@ -1,6 +1,6 @@
 /**
- * ビルド後の sa コマンド（dist）を実際に起動して、対象の作成 → 取り込み（unpack・sourcemap）→ エンドポイントの抽出 → バックアップを
- * 一通り動かす。
+ * ビルド後の sa コマンド（dist）を実際に起動して、対象の作成 → 取り込み（unpack・sourcemap）→ エンドポイントの抽出 →
+ * 未取得のチャンクの一覧 → バックアップを一通り動かす。
  * pnpm build の後に CI で実行する。単体テストは src を読むので、dist の解決（worker の dist/workers/*.js を含む）はここで確かめる。
  */
 import { execFileSync } from 'node:child_process';
@@ -33,10 +33,17 @@ try {
   if (e.endpoints !== 18 || e.extractors.ast_url?.skipped !== 0 || e.extractors.graphql?.found !== 7) {
     throw new Error(`unexpected extract-endpoints result: ${JSON.stringify(e)}`);
   }
+  // dist/workers/chunks.js: webpack5-basic は全部取り込んであるので、チャンクは取得済み
+  const c = JSON.parse(sa('missing-chunks', 'smoke'));
+  const chunk = (key) => c.chunks.find((x) => x.chunkKey === key)?.status;
+  if (c.skipped !== 0 || chunk('245') !== 'fetched' || chunk('949') !== 'fetched') {
+    throw new Error(`unexpected missing-chunks result: ${JSON.stringify(c)}`);
+  }
   const b = JSON.parse(sa('backup', join(home, 'snapshot.db')));
   if (b.schemaVersion < 1) throw new Error(`unexpected backup result: ${JSON.stringify(b)}`);
   console.log(
-    `smoke ok: ${r.unpack.moduleCount} modules, ${accepted} sourcemaps accepted, ${e.endpoints} endpoints, backup schema ${b.schemaVersion}`,
+    `smoke ok: ${r.unpack.moduleCount} modules, ${accepted} sourcemaps accepted, ${e.endpoints} endpoints, ` +
+      `${c.chunks.length} chunk references, backup schema ${b.schemaVersion}`,
   );
 } finally {
   rmSync(home, { recursive: true, force: true });

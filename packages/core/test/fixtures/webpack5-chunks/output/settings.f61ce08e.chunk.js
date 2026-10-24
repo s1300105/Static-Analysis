@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunksa_fixture_webpack5_chunks=self.webpackChunksa_fixture_webpack5_chunks||[]).push([[472],{227:(e,s,u)=>{function t(){return fetch("/api/settings")}u.d(s,{default:()=>t})}}]);
+//# sourceMappingURL=settings.f61ce08e.chunk.js.map

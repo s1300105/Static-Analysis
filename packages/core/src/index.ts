@@ -69,6 +69,14 @@ export {
   type SourcemapIngest,
 } from './artifact/ingest';
 export { importHar, type ImportHarResult } from './artifact/har';
+export {
+  findMissingChunks,
+  markChunkUnavailable,
+  type ExpectedChunk,
+  type ExpectedChunkKind,
+  type FindMissingChunksResult,
+} from './artifact/chunks';
+export type { ExpectedChunkStatus } from './db/repo/expectedChunk';
 export type { PageContext, PageSecurityHeaders } from './db/repo/pageContext';
 // Analysis（design.md §7.3）。E1: エンドポイントの抽出と一覧
 export {

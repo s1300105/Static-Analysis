@@ -112,7 +112,7 @@ packages/core/src/
 ├─ jobs/
 │  ├─ runner.ts      JobRunner: runWorker() / runChild()（上限・タイムアウト）
 │  ├─ skips.ts       SkipLog（理由別のスキップ記録 → analysis_run.skipped_detail）
-│  └─ workers/       unpack / sourcemap / endpoints の *.worker.ts（worker_threads のエントリ。index.ts が src/dist の置き場所を解決）
+│  └─ workers/       unpack / sourcemap / endpoints / chunks の *.worker.ts（worker_threads のエントリ。index.ts が src/dist の置き場所を解決）
 │                    と shared.ts（AST の走査・位置の変換）・bindings.ts（範囲ごとの変数の値）・graphql.ts（GraphQL の operation）
 ├─ policy/
 │  ├─ paths.ts       generateWorkPath() / generateOriginalSourcePath() / assertWithinWorkspace() / writeWorkFile()（原則8）
@@ -300,7 +300,8 @@ unpackBundle(ctx, { versionId, retryFailed? })
 pretty(ctx, { fileId }): { prettyFileId: string; positionMapHash: string };                                    // ×  手順3
 relinkBundle(ctx, { versionId }): { relinkedFileIds: string[]; unresolvedRequire: number };                    // ×  手順4
 indexFunctions(ctx, { versionId }): { functionCount: number; lineage: LineageStats };                          // ×  手順5/6
-findMissingChunks(ctx, { versionId }): ExpectedChunk[];                                                         // ○読 手順2
+findMissingChunks(ctx, { versionId }): Promise<{ runId; chunks: ExpectedChunk[]; missing; skipped }>;          // ○読 手順2
+markChunkUnavailable(ctx, versionId, chunkKey): void;  // 人間が取りに行って取れなかった印                        // ×  手順2
 importHar(ctx, { targetId, harPath, versionId?, collectedAt?, label?, baseVersionId?, collectionNotes? })
   : ImportHarResult;  // ingestHar は続けて unpack・sourcemap を掛ける                                           // ×  手順2
 ```
@@ -322,6 +323,18 @@ PR-11 での取り決め（`artifact/har.ts`・`analysis/endpoints/har.ts`）:
   sighting は endpoint ごとに 1 つ（位置なし）で、同じ版の前回の HAR のパラメータと足し合わせる。照合は取り込む時点の endpoint に対して
   行うので、`sa extract-endpoints` を先に掛ける
 - 版を新しく作るときの取得日時は、省けば HAR の最初の記録（page か entry）の日時。analysis_run は kind=ingest・tool=import_har
+
+PR-12 での取り決め（`artifact/chunks.ts`・`jobs/workers/chunks.worker.ts`）:
+- 参照の収集（worker）: webpack 5 のランタイムの `X.u`（チャンク ID → ファイル名。文字列・ID・`{id: …}[e]`・`({…}[e]||e)` の連結）と
+  同じ X の `X.p`（文字列なら公開パス、式なら auto）、`X.e(id)`（非同期）と `X.O(void 0, [id…])`（起動時の依存）のリテラルの ID、
+  `import("…")`、`new URL("….js|.mjs|.cjs|.wasm", import.meta.url)`、`sourceMappingURL`（data: を除く）と `/*! For license information please see … */`
+- チャンク ID のファイル名は版のどこかのランタイムで作る（読むコードは別のファイルにあることがある）。起動時の依存は HTML が読むので、
+  組み立て方の表に ID があるときだけファイル名を作る（チャンクが 1 つのとき webpack は組み立て方を定数に畳む）
+- URL: 公開パスが絶対ならそれ、`/` で始まれば文書（`loaded_by_origins`）かスクリプトのオリジンから、auto ならスクリプトの配信 URL
+  （`source_urls`）の場所から解く。ほかの参照はスクリプトの URL から解く。解けなければ URL は null で、書かれた値をキーにする
+- `chunk_key` はチャンク ID、それ以外は URL（解けなければ書かれた値）。取得済みは raw の `chunk_key`（unpack が push の ID を入れる）、
+  配信 URL（クエリを除く）、ファイル名（`orig_name`）で判定する。`host_in_scope` は `policy/scope.ts`
+- 掛け直しは版の行を作り直す（参照が無くなった行は消す）。人間が付けた `unavailable` は、計算が `missing` の間は残す
 
 手順1 の実装上の取り決め（PR-4）:
 - `loadArtifact` はファイルごとに配信 URL・読み込み元オリジン・帰属・チャンクキーを受ける（`LoadArtifactFile`。zod スキーマは `@sa/types`）。
@@ -447,6 +460,7 @@ sa-core の関数に 1:1 で薄く割り当てる。`caller='cli'`。判定・�
 | `sa target add` / `list` / `show` / `set-scope` | createTarget / listTargets / describeTarget / updateTargetScope（scope・llm_code_policy） | 1 |
 | `sa load`（取り込み → unpack → sourcemap）/ `sa import-har` | ingestArtifacts（loadArtifact → unpackBundle → importSourcemap）/ ingestHar（importHar → 同じ流れ） | 1/2 |
 | `sa extract-endpoints` / `sa endpoints` / `sa diff` / `sa export-endpoints` / `sa triage-endpoint` | extractEndpoints / listEndpoints / diffVersions / exportEndpoints / endpoint triage | 2 |
+| `sa missing-chunks`（`--unavailable <key>` で取れなかった印） | findMissingChunks / markChunkUnavailable | 2 |
 | `sa analyze`（detect-stack→relink→taint→triage の一括 or 個別） | detectStack / relinkBundle / taintPaths / applyTriage | 4 |
 | `sa plan` | exportTestPlan | 5 |
 | `sa ingest <file>` | recordDynamicResult / confirmFact / setVerdict …（ファイルの判定欄を取り込む） | 5 |

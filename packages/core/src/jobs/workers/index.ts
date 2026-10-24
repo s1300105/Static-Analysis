@@ -14,6 +14,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { version as graphqlVersion } from 'graphql';
 import { defineWorker } from '../runner';
+import type { ChunksInput, ChunksOutput } from './chunks.worker';
 import type { EndpointsInput, EndpointsOutput } from './endpoints.worker';
 import type { SourcemapInput, SourcemapOutput } from './sourcemap.worker';
 import type { UnpackInput, UnpackOutput } from './unpack.worker';
@@ -29,6 +30,7 @@ function workerUrl(name: string): URL {
 export const unpackWorker = defineWorker<UnpackInput, UnpackOutput>('unpack', workerUrl('unpack'));
 export const sourcemapWorker = defineWorker<SourcemapInput, SourcemapOutput>('sourcemap', workerUrl('sourcemap'));
 export const endpointsWorker = defineWorker<EndpointsInput, EndpointsOutput>('endpoints', workerUrl('endpoints'));
+export const chunksWorker = defineWorker<ChunksInput, ChunksOutput>('chunks', workerUrl('chunks'));
 
 /** analysis_run.tool_version に残す graphql-js の版（GraphQL の抽出） */
 export const GRAPHQL_JS_VERSION: string = graphqlVersion;

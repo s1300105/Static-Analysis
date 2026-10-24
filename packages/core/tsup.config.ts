@@ -7,6 +7,7 @@ export default defineConfig({
     'workers/unpack': 'src/jobs/workers/unpack.worker.ts',
     'workers/sourcemap': 'src/jobs/workers/sourcemap.worker.ts',
     'workers/endpoints': 'src/jobs/workers/endpoints.worker.ts',
+    'workers/chunks': 'src/jobs/workers/chunks.worker.ts',
   },
   format: ['esm'],
   dts: { entry: { index: 'src/index.ts' } },

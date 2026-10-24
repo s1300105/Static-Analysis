@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunksa_fixture_webpack5_chunks=self.webpackChunksa_fixture_webpack5_chunks||[]).push([[884],{447:(e,u,s)=>{function a(){return fetch("/api/admin/users")}s.d(u,{default:()=>a})}}]);
+//# sourceMappingURL=admin.3be16cd6.chunk.js.map
