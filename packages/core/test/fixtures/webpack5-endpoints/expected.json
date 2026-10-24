@@ -1,0 +1,21 @@
+{
+  "note": "build/src/api.js の呼び出し箇所の正解（ast_url が拾うべきもの）。params は名前と置き場所だけ",
+  "endpoints": [
+    { "protocol": "rest", "method": "GET", "origin": "", "pathNorm": "/api/v2/users/{}", "params": [["include", "query"]] },
+    { "protocol": "rest", "method": "PUT", "origin": "", "pathNorm": "/api/v2/users/{}", "params": [["displayName", "body"], ["email", "body"]] },
+    { "protocol": "rest", "method": "DELETE", "origin": "", "pathNorm": "/api/v2/docs/{}", "params": [] },
+    { "protocol": "rest", "method": "GET", "origin": "", "pathNorm": "/api/v2/admin/stats", "params": [] },
+    { "protocol": "rest", "method": "GET", "origin": "", "pathNorm": "/api/v2/search", "params": [["limit", "query"], ["q", "query"]] },
+    {
+      "protocol": "rest",
+      "method": "POST",
+      "origin": "https://auth.example.com",
+      "pathNorm": "/oauth/token",
+      "params": [["Content-Type", "header"], ["X-Client-Version", "header"], ["grant_type", "body"], ["password", "body"], ["username", "body"]]
+    },
+    { "protocol": "rest", "method": "POST", "origin": "", "pathNorm": "/legacy/reports/{}/export", "params": [] },
+    { "protocol": "websocket", "method": "", "origin": "wss://rt.example.com", "pathNorm": "/socket", "params": [] },
+    { "protocol": "rest", "method": "POST", "origin": "", "pathNorm": "/telemetry/ping", "params": [] },
+    { "protocol": "rest", "method": "POST", "origin": "", "pathNorm": "/api/v1/legacy-search", "params": [["page", "body"], ["query", "body"]] }
+  ]
+}

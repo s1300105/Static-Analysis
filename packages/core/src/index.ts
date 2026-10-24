@@ -1,6 +1,7 @@
 /**
  * @sa/core の公開 API。
- * いまは errors / ids / db（接続・トランザクション・移行）/ store（blob・バックアップ）/ jobs の型 / context と設定 / artifact。
+ * いまは errors / ids / db（接続・トランザクション・移行）/ store（blob・バックアップ）/ jobs の型 / context と設定 / artifact /
+ * analysis（E1 のエンドポイント）。
  * 以降の PR で context / jobs / policy / artifact / intel / analysis / findings を足していく（docs/architecture.md §3）。
  */
 export * from './errors';
@@ -43,8 +44,10 @@ export {
   createTarget,
   describeTarget,
   findTarget,
+  findVersion,
   listTargets,
   updateTargetScope,
+  type ArtifactVersion,
   type Target,
   type TargetDetail,
   type TargetScopePatch,
@@ -55,5 +58,13 @@ export { loadArtifact, type LoadArtifactResult } from './artifact/load';
 export { unpackBundle, type UnpackBundleOptions, type UnpackBundleResult } from './artifact/unpack';
 export { importSourcemap, type ImportSourcemapOptions, type ImportSourcemapResult } from './artifact/sourcemap';
 export { ingestArtifacts, type IngestOptions, type IngestResult, type SourcemapIngest } from './artifact/ingest';
+// Analysis（design.md §7.3）。E1: エンドポイントの抽出と一覧
+export {
+  extractEndpoints,
+  type ExtractEndpointsOptions,
+  type ExtractEndpointsResult,
+} from './analysis/endpoints/extract';
+export { listEndpoints, type EndpointListItem, type EndpointSummary, type ListEndpointsOptions } from './analysis/endpoints/list';
+export { normalizeEndpointUrl, type NormalizedEndpoint } from './analysis/endpoints/normalize';
 
 export { CORE_VERSION } from './version';

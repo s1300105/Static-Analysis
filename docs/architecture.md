@@ -112,14 +112,15 @@ packages/core/src/
 ├─ jobs/
 │  ├─ runner.ts      JobRunner: runWorker() / runChild()（上限・タイムアウト）
 │  ├─ skips.ts       SkipLog（理由別のスキップ記録 → analysis_run.skipped_detail）
-│  └─ workers/       unpack.worker.ts / sourcemap.worker.ts（worker_threads のエントリ。index.ts が src/dist の置き場所を解決）
+│  └─ workers/       unpack / sourcemap / endpoints の *.worker.ts（worker_threads のエントリ。index.ts が src/dist の置き場所を解決）
+│                    と shared.ts（worker 間で共有する AST の走査・位置の変換）
 ├─ policy/
 │  ├─ paths.ts       generateWorkPath() / generateOriginalSourcePath() / assertWithinWorkspace() / writeWorkFile()（原則8）
 │  ├─ llm.ts         enforceLlmCodePolicy()（コード本文を返す出口で検査）
 │  └─ transitions.ts 状態遷移の権限表（誰がどの state 遷移を許されるか）
 ├─ artifact/         load / unpack / relink / pretty / sourcemap / chunks / har
 ├─ intel/            resolveLocation / getFunction / findReferences / callPath
-├─ analysis/         extractEndpoints / diffVersions / detectStack / taintPaths / originValidation
+├─ analysis/         endpoints/（normalize・extract・list）/ diffVersions / detectStack / taintPaths / originValidation
 ├─ findings/         candidate / evidence / refutation / triage / facts / calibration / export
 └─ index.ts          公開 API（入口が呼ぶ関数だけ re-export）
 ```
@@ -313,8 +314,9 @@ importHar(ctx, { targetId, versionId, harPath }): HarIngestSummary;             
 - `importSourcemap` の簡易検証は、生成側を「識別子の先頭か」で近似し、元側は「その位置か同じ行のそれ以降に names[i] が識別子として現れるか」で数える
   （webpack の map は元側の位置を文の先頭に丸めるため）。閾値の既定は 0.7（fixture で正しい map 0.83〜1.0、別ビルド・別チャンク 0.01〜0.25。design.md §13 で決め直す）。
   生成元は sourceMappingURL、次に `<name>.map` ↔ `<name>` で探し、決まらなければ `generatedFileId` を求める。
-- worker のモジュール（`jobs/workers/*.worker.ts`）は相対 import をせず（型だけは可）、消せる型構文だけを使う。
-  テストでは Node の型除去でソースを、ビルド後は `dist/workers/<name>.js` を読む。後者は CI の `pnpm smoke` で確かめる。
+- worker のモジュール（`jobs/workers/*.worker.ts`）の相対 import は同じ階層の worker 用モジュール（`./shared.ts`）だけにして拡張子を付け
+  （型だけの import は可。PR-8 で tsconfig に `allowImportingTsExtensions` を足した）、消せる型構文だけを使う。
+  テストでは Node の型除去でソースを、ビルド後は `dist/workers/<name>.js`（tsup が shared.ts を取り込む）を読む。後者は CI の `pnpm smoke` で確かめる。
 
 ### 5.2 Code intel（`intel/`）
 
@@ -332,7 +334,9 @@ callPath(ctx, { candidateId? , pathResultId }): CallPathResult;                 
 
 ```ts
 detectStack(ctx, { versionId }): DetectedLibrary[];                                                             // ○  手順4
-extractEndpoints(ctx, { versionId }): { endpoints: number; sightings: number };                                // ○  手順2
+extractEndpoints(ctx, { versionId })
+  : Promise<{ runId; modules; calls; dropped; endpoints: number; sightings: number; skipped }>;                // ○  手順2
+listEndpoints(ctx, { targetId, includeUnseen? }): EndpointListItem[];  // VIEW の派生値＋パラメータの和集合         // ○読 手順2
 diffVersions(ctx, { versionId, baseVersionId }): DiffResult;                                                    // ○  手順2/6
 exportEndpoints(ctx, { targetId, filter }): { openapi?: object; graphql?: string };                            // ×  手順2
 taintPaths(ctx, { versionId, classes }): { candidates: number; clientEntries: number; skipped: SkipDetail };   // ○  手順4/7
@@ -342,6 +346,21 @@ runRules(ctx, { versionId }): RuleHit[];                                        
 ```
 
 `extractEndpoints` は 3 抽出器（jsluice 子プロセス＋位置戻し / ast_url=Babel AST / GraphQL=graphql-js）。並び順は学習しない決定的規則（design.md §7.3）。
+
+E1 の取り決め（PR-7・PR-8）:
+- `path_norm` は `analysis/endpoints/normalize.ts` の `normalizeEndpointUrl` だけで作る（全抽出器で共通）。スコープ判定は `policy/scope.ts` と
+  VIEW `api_endpoint_summary` が同じ規則を持ち、テストで一致を確かめる。
+- ast_url は **HTTP クライアントの呼び出し**（fetch / new Request、`x.get/post/…`、`{ url, method, … }` の設定オブジェクトと `$.ajax`、
+  `xhr.open`、`sendBeacon`、`new WebSocket` / `new EventSource`）だけを拾う。呼び出しに渡らない URL らしい文字列は jsluice（PR-9）に任せる
+  （SPA のルート定義・静的ファイルのパスを拾わないため）。method の無い fetch / 設定オブジェクトは GET、method が式なら不明（`''`）。
+- ベース URL は同じモジュールの中だけで推定する（`baseURL` 等の文字列、または `fetch("/api" + path)` のような送信部）。候補が 1 つのときだけ、
+  メソッド名の呼び出しの相対 URL に付ける。送信部そのものはエンドポイントにしない。
+- 入力は unpacked のモジュール（webpack のファクトリは関数式なので、プログラムとして読めなければ式として読む）。unpack していない raw は
+  ファイル全体を読む。位置は呼び出し式の raw 基準のバイト範囲（`raw_offset` を足す）で `code_location` に置き、表示用の行・列も入れる。
+- 相対 URL の origin は raw の `loaded_by_origins`（http(s) のオリジン）で補う（design.md §6.2）。複数あればそれぞれの endpoint にし、
+  無ければ `''`。相対の WebSocket は ws(s) にする。パスに固定の部分が無く origin も分からない URL は捨てる（`dropped`）。
+- 掛け直し: raw ファイルごとに全モジュールを読めたら、その raw にある ast_url の sighting を作り直す（読めないモジュールがあれば足すだけ）。
+  `api_endpoint` は triage を持つので消さない。sighting の無くなった endpoint は `listEndpoints` の既定では出さない（`--all` で出す）。
 `taintPaths` は標準 .ql をそのまま流さず**自前クエリパック**を使い、確定事実を data extension YAML で注入する（design.md §3.4）。
 
 ### 5.4 Findings（`findings/`）★ループの心臓部
@@ -387,7 +406,7 @@ sa-core の関数に 1:1 で薄く割り当てる。`caller='cli'`。判定・�
 |---|---|---|
 | `sa target add` / `list` / `show` / `set-scope` | createTarget / listTargets / describeTarget / updateTargetScope（scope・llm_code_policy） | 1 |
 | `sa load`（取り込み → unpack → sourcemap）/ `sa import-har` | ingestArtifacts（loadArtifact → unpackBundle → importSourcemap）/ importHar | 1/2 |
-| `sa extract-endpoints` / `sa diff` / `sa export-endpoints` / `sa triage-endpoint` | extractEndpoints / diffVersions / exportEndpoints / endpoint triage | 2 |
+| `sa extract-endpoints` / `sa endpoints` / `sa diff` / `sa export-endpoints` / `sa triage-endpoint` | extractEndpoints / listEndpoints / diffVersions / exportEndpoints / endpoint triage | 2 |
 | `sa analyze`（detect-stack→relink→taint→triage の一括 or 個別） | detectStack / relinkBundle / taintPaths / applyTriage | 4 |
 | `sa plan` | exportTestPlan | 5 |
 | `sa ingest <file>` | recordDynamicResult / confirmFact / setVerdict …（ファイルの判定欄を取り込む） | 5 |
@@ -409,6 +428,8 @@ PR-5 での取り決め:
 - `sa load` はファイルを位置引数か `--manifest`（`LoadArtifactFile` の JSON 配列。配信 URL 等を持てる）で受ける。新しい版には `--collected-at`（ISO 8601 か `now`）が要る。
   生成元が決まらない sourcemap はその map だけ取り込まずに続け、理由を表示する。
 - ビルド後の `sa` を実際に起動して一通り動かす `pnpm smoke` を CI で回す。
+- `sa extract-endpoints <target>` は `--version-id` を省けば取得日時が最も新しい版を読む（PR-8）。`sa endpoints <target>` は
+  メソッド・URL（origin＋path_template）・パラメータ（置き場所:名前）・スコープ・sighting の数を 1 行ずつ出す。
 
 ### 6.2 `@sa/mcp`（sa-mcp サーバ）
 
@@ -492,7 +513,7 @@ M2（第1段 E1。計画書 M2）の PR 単位:
 
 7. **PR-7 E1 のスキーマ**: `0002_e1.sql`（`api_endpoint`・`endpoint_sighting`・`page_context`、派生値の VIEW `api_endpoint_summary`）、
    `path_norm` の正規化（`analysis/endpoints/normalize.ts`）、スコープ判定（`policy/scope.ts`。VIEW の in_scope と同じ規則）、リポジトリ関数。
-8. **PR-8 ast_url 抽出器**: Babel AST から HTTP クライアント呼び出しと URL らしい文字列を拾う `extractEndpoints`（worker）、`sa extract-endpoints` / `sa endpoints`。
+8. **PR-8 ast_url 抽出器**: Babel AST から HTTP クライアントの呼び出しを拾う `extractEndpoints`（worker）、`listEndpoints`、`sa extract-endpoints` / `sa endpoints`。
 9. **PR-9 jsluice 抽出器**: 子プロセス＋raw への位置戻し。ツールのパスを設定に足す。
 10. **PR-10 GraphQL 抽出**: graphql-js（本文・DocumentNode・Relay・persisted hash）。
 11. **PR-11 `import_har`**: 許可リスト抽出（HAR を保存しない・値を残さないテスト）、`page_context`、`extracted_by='har'` の sighting。

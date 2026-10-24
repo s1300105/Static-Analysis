@@ -118,6 +118,23 @@ export function upsertSighting(ctx: HasDb, s: NewSighting): void {
   );
 }
 
+/**
+ * 抽出器の掛け直しの前に、版の raw ファイル 1 つにある sighting を消す（抽出器の結果を作り直すため）。
+ * api_endpoint は triage（人間の判断）を持つので消さない。消した数を返す
+ */
+export function deleteSightingsInRawFile(ctx: HasDb, q: { versionId: string; rawFileId: string; extractedBy: EndpointExtractor }): number {
+  return dbCall(
+    () =>
+      ctx.db
+        .prepare(
+          `DELETE FROM endpoint_sighting
+           WHERE version_id = ? AND extracted_by = ?
+             AND location_id IN (SELECT id FROM code_location WHERE raw_file_id = ?)`,
+        )
+        .run(q.versionId, q.extractedBy, q.rawFileId).changes,
+  );
+}
+
 /** 対象の endpoint を派生値つきで返す（path_norm・method・origin・operation の順） */
 export function listEndpointSummaries(ctx: HasDb, targetId: string): EndpointSummary[] {
   const rows = dbCall(

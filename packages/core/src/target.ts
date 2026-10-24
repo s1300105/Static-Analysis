@@ -6,7 +6,7 @@
 import { type Layer, type TargetScope, type TargetScopeInput, TargetScopeSchema } from '@sa/types';
 import type { SaContext } from './context';
 import { countArtifactFilesByLayer } from './db/repo/artifactFile';
-import { type ArtifactVersion, listArtifactVersions } from './db/repo/artifactVersion';
+import { type ArtifactVersion, getArtifactVersion, listArtifactVersions } from './db/repo/artifactVersion';
 import {
   type Target,
   findTargetsByName,
@@ -21,6 +21,7 @@ import { assertHumanCaller } from './policy/caller';
 import { parseInput } from './validate';
 
 export type { Target } from './db/repo/target';
+export type { ArtifactVersion } from './db/repo/artifactVersion';
 
 export interface VersionSummary extends ArtifactVersion {
   /** 層ごとのファイル数 */
@@ -77,6 +78,18 @@ export function updateTargetScope(ctx: SaContext, idOrName: string, patch: Targe
   const scope = checkScope(parseInput(TargetScopeSchema, { ...current, ...defined }, 'target.scope'));
   setTargetScope(ctx, target.id, scope);
   return getTarget(ctx, target.id)!;
+}
+
+/** 対象の版を返す。versionId を省けば取得日時が最も新しい版 */
+export function findVersion(ctx: SaContext, targetId: string, versionId?: string): ArtifactVersion {
+  if (versionId !== undefined) {
+    const v = getArtifactVersion(ctx, versionId);
+    if (!v || v.targetId !== targetId) throw new SaError('NOT_FOUND', `artifact_version not found in the target: ${versionId}`);
+    return v;
+  }
+  const latest = listArtifactVersions(ctx, targetId).at(-1);
+  if (!latest) throw new SaError('NOT_FOUND', 'the target has no artifact version yet (run sa load first)');
+  return latest;
 }
 
 function checkScope(scope: TargetScope): TargetScope {

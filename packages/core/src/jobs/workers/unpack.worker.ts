@@ -1,6 +1,6 @@
 /**
  * unpack worker: raw の JS をパースし、モジュール境界を raw のバイト範囲で返す（design.md §6.6 の unpacked 層）。
- * worker 側の規約（相対 import をしない・消せる型構文だけ）は ./index.ts を参照。
+ * worker 側の規約（相対 import は ./shared.ts のように拡張子付きで同じ階層だけ・消せる型構文だけ）は ./index.ts を参照。
  *
  * 認識する形（webpack 5 の production 出力）:
  * - チャンク: (self.webpackChunkX = self.webpackChunkX || []).push([[<chunk ids>], { <id>: <factory>, ... }, <runtime>?])
@@ -10,6 +10,7 @@
  */
 import { parse } from '@babel/parser';
 import type { BlockStatement, CallExpression, Expression, Node, ObjectExpression } from '@babel/types';
+import { skip, toByteOffsets, walk } from './shared.ts';
 
 export interface UnpackInput {
   /** raw のバイト列（UTF-8） */
@@ -184,51 +185,4 @@ function propertyName(m: Extract<Node, { type: 'MemberExpression' }>): string | 
   if (!m.computed && m.property.type === 'Identifier') return m.property.name;
   if (m.computed && m.property.type === 'StringLiteral') return m.property.value;
   return undefined;
-}
-
-/** 深い AST でもスタックを使い切らないよう、明示的なスタックで辿る */
-function walk(root: Node, visit: (n: Node) => void): void {
-  const stack: unknown[] = [root];
-  while (stack.length > 0) {
-    const v = stack.pop();
-    if (Array.isArray(v)) {
-      for (const x of v) stack.push(x);
-      continue;
-    }
-    if (v === null || typeof v !== 'object' || typeof (v as { type?: unknown }).type !== 'string') continue;
-    visit(v as Node);
-    for (const [k, child] of Object.entries(v)) {
-      if (k === 'loc' || k === 'extra' || k.endsWith('Comments')) continue;
-      if (child !== null && typeof child === 'object') stack.push(child);
-    }
-  }
-}
-
-/**
- * 文字位置（UTF-16 のコード単位。Babel の start/end）を UTF-8 のバイト位置に変える。全位置を 1 回の走査で求める。
- * 入力は fatal な UTF-8 デコードを通っているので、サロゲートは必ず対になっている。
- */
-function toByteOffsets(text: string, indices: number[]): Map<number, number> {
-  const targets = [...new Set(indices)].sort((a, b) => a - b);
-  const out = new Map<number, number>();
-  let byte = 0;
-  let i = 0;
-  for (const target of targets) {
-    while (i < target) {
-      const c = text.charCodeAt(i);
-      if (c < 0x80) byte += 1;
-      else if (c < 0x800) byte += 2;
-      else if (c >= 0xd800 && c <= 0xdbff) {
-        byte += 4;
-        i++;
-      } else byte += 3;
-      i++;
-    }
-    out.set(target, byte);
-  }
-  return out;
-}
-
-function skip(reason: string, message: string): Error {
-  return Object.assign(new Error(message), { skipReason: reason });
 }

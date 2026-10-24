@@ -17,6 +17,7 @@ function tmp(): string {
 
 const fixtures = new URL('../../core/test/fixtures/webpack5-basic/', import.meta.url).pathname;
 const output = join(fixtures, 'output');
+const endpointsBundle = new URL('../../core/test/fixtures/webpack5-endpoints/output/main.c452f02c.js', import.meta.url).pathname;
 
 /** home を一時ディレクトリにして sa を実行する */
 function cli(home: string) {
@@ -41,7 +42,7 @@ describe('sa', () => {
     expect(await sa('--version')).toMatchObject({ code: 0, stdout: `${CLI_VERSION}\n` });
     const help = await sa('--help');
     expect(help.code).toBe(0);
-    for (const c of ['target', 'load', 'backup']) expect(help.stdout).toContain(c);
+    for (const c of ['target', 'load', 'extract-endpoints', 'endpoints', 'backup']) expect(help.stdout).toContain(c);
   });
 
   it('rejects unknown commands and options as usage errors', async () => {
@@ -171,6 +172,61 @@ describe('sa load', () => {
     const har = await sa('load', 'example', 'capture.har', '--collected-at', 'now');
     expect(har.code).toBe(2);
     expect(har.stderr).toContain('HAR files are not stored');
+  });
+});
+
+describe('sa extract-endpoints / sa endpoints', () => {
+  it('extracts endpoints from the latest version and lists them', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    await sa('target', 'add', 'example', '--allow', 'app.example.com', '--allow', '*.example.com', '--out-of-scope', 'auth.example.com');
+    writeFileSync(join(home, 'manifest.json'), JSON.stringify([{ path: endpointsBundle, loadedByOrigins: ['https://app.example.com'] }]));
+    await sa('load', 'example', '--manifest', 'manifest.json', '--collected-at', '2026-09-01T00:00:00Z');
+    const latest = await sa('--json', 'load', 'example', '--manifest', 'manifest.json', '--collected-at', '2026-10-01T00:00:00Z');
+    const versionId = latest.json<{ load: { versionId: string } }>().load.versionId;
+
+    const r = await sa('extract-endpoints', 'example');
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(`version ${versionId}: 1 modules, 10 calls (0 without a usable URL), 0 skipped`);
+    expect(r.stdout).toContain('10 endpoints, 10 sightings');
+
+    const list = await sa('endpoints', 'example');
+    expect(list.code).toBe(0);
+    const lines = list.stdout.trim().split('\n');
+    expect(lines).toHaveLength(10);
+    expect(lines).toContain('GET     https://app.example.com/api/v2/users/:param  [query:include]  (in scope; 1 sighting)');
+    expect(lines).toContain(
+      'POST    https://auth.example.com/oauth/token  [body:grant_type body:password body:username header:Content-Type header:X-Client-Version]  (OUT OF SCOPE; 1 sighting)',
+    );
+    expect(lines).toContain('websocket wss://rt.example.com/socket  (in scope; 1 sighting)');
+
+    const json = await sa('--json', 'endpoints', 'example');
+    expect(json.json<unknown[]>()).toHaveLength(10);
+    expect(json.json<{ pathNorm: string; params: unknown[] }[]>().find((e) => e.pathNorm === '/api/v2/search')).toMatchObject({
+      method: 'GET',
+      origin: 'https://app.example.com',
+      params: [
+        { name: 'limit', in: 'query' },
+        { name: 'q', in: 'query' },
+      ],
+      inScope: true,
+      firstSeen: '2026-10-01T00:00:00.000Z',
+    });
+  });
+
+  it('extracts a chosen version and reports errors', async () => {
+    const home = tmp();
+    const sa = cli(home);
+    await sa('target', 'add', 'example');
+    await sa('target', 'add', 'other');
+    expect((await sa('extract-endpoints', 'example')).code).toBe(3);
+    expect((await sa('endpoints', 'example')).stdout).toContain('no endpoints');
+    const loaded = await sa('--json', 'load', 'example', endpointsBundle, '--collected-at', 'now');
+    const versionId = loaded.json<{ load: { versionId: string } }>().load.versionId;
+    expect((await sa('extract-endpoints', 'other', '--version-id', versionId)).code).toBe(3);
+    const r = await sa('--json', 'extract-endpoints', 'example', '--version-id', versionId);
+    expect(r.code).toBe(0);
+    expect(r.json()).toMatchObject({ versionId, endpoints: 10, skipped: 0 });
   });
 });
 
