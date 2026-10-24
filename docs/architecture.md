@@ -160,7 +160,10 @@ export function closeContext(ctx: SaContext): void;
 - 索引: 子側外部キー列に索引（`evidence(candidate_id)`、`candidate_fact(fact_id)`、`function_lineage(next_fn_id)` など）。UNIQUE 自動索引と重複させない。
 - CHECK: スキーマが固まるまでは、同じ行で完結する安全上重要なもの（`confirmed_fact` の polarity×fact_type、dynamic_result の `candidate_id OR endpoint_id`）だけ。
 - **スキーマ確定の順序**（計画書どおり）: §6.1 は M1、§6.2 は M2、**候補・証拠（§6.3）は M4 冒頭**、**事実（§6.4）は M5**、較正（§6.5）は M6。
-  migration ファイルはこの段階に合わせて分ける（0001 骨格 → 0002 E1 → 0003 候補 → 0004 事実 → 0005 較正）。
+  migration ファイルはこの段階に合わせて分ける（0001 骨格 → 0002 E1 → 0003 関数同一性（M3）→ 0004 候補 → 0005 事実 → 0006 較正）。
+- **まだ無い表への外部キーは書かない**: `foreign_keys=ON` では、存在しない表を `REFERENCES` する列があると NULL でも INSERT が失敗する。
+  そのため `code_location.fn_id → function_identity` は 0001 に置かず、`function_identity` を作る移行で `ALTER TABLE code_location ADD COLUMN fn_id TEXT REFERENCES function_identity(id)` として足す。
+- 未適用の移行はまとめて 1 つの `BEGIN IMMEDIATE` で適用し、最後に `foreign_key_check` を掛ける。移行 SQL に BEGIN/COMMIT は書かない。
 
 リポジトリ関数の形（例）:
 

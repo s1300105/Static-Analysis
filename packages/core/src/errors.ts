@@ -9,14 +9,16 @@ export type SaErrorCode =
   | 'ILLEGAL_TRANSITION' // 状態遷移の権限違反（design.md §6.3）
   | 'NOT_FOUND'
   | 'DB_ERROR'
+  | 'INTEGRITY_ERROR' // blob のハッシュ不一致、移行後の外部キー違反、バックアップの検査失敗
+  | 'IO_ERROR' // blob ストアなどファイルの読み書きの失敗
   | 'TOOL_ERROR'; // 外部ツール（CodeQL/Semgrep/jsluice/Babel）の失敗
 
 export class SaError extends Error {
   readonly code: SaErrorCode;
   readonly detail?: unknown;
 
-  constructor(code: SaErrorCode, message: string, detail?: unknown) {
-    super(message);
+  constructor(code: SaErrorCode, message: string, detail?: unknown, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'SaError';
     this.code = code;
     this.detail = detail;

@@ -13,9 +13,14 @@
   },
   "files": ["dist"],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean"
+    "build": "tsup src/index.ts --format esm --dts --clean --loader .sql=text"
   },
   "dependencies": {
-    "@sa/types": "workspace:*"
+    "@sa/types": "workspace:*",
+    "better-sqlite3": "^12.11.1",
+    "ulid": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0"
   }
 }
