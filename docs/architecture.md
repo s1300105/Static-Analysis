@@ -119,7 +119,7 @@ packages/core/src/
 │  ├─ llm.ts         enforceLlmCodePolicy()（コード本文を返す出口で検査）
 │  └─ transitions.ts 状態遷移の権限表（誰がどの state 遷移を許されるか）
 ├─ artifact/         load / unpack / relink / pretty / sourcemap / chunks / har（import_har）/ position
-├─ intel/            resolveLocation / getFunction / findReferences / callPath
+├─ intel/            resolveLocation / getFunction / findReferences / callPath / lineagePrecheck（手順6の前提確認）
 ├─ analysis/         endpoints/（normalize・extract・babel・jsluice・sightings・list）/ diffVersions / detectStack / taintPaths / originValidation
 ├─ findings/         candidate / evidence / refutation / triage / facts / calibration / export
 └─ index.ts          公開 API（入口が呼ぶ関数だけ re-export）
@@ -362,6 +362,16 @@ callPath(ctx, { candidateId? , pathResultId }): CallPathResult;                 
 - `getFunction` は上限（例 40K 文字）超で内側関数をプレースホルダに畳んだ骨格＋窓を返し `truncated=true`（design.md §7.2）。
 - **LLM 送信可否の強制**: コード本文を返す関数（`getFunction`/`callPath`/`findReferences` など）は戻り値を作る**出口**で `policy/llm.ts` の `enforceLlmCodePolicy(ctx, targetId, result)` を必ず通す。`deny`→エラー、`no_original`→original 層本文を外す。ローカル完結の解析（CodeQL/jsluice）は制限しない（design.md §7.2）。
 
+手順6の前提確認（PR-15。`intel/lineagePrecheck.ts`・`packages/core/scripts/lineage-precheck.ts`）:
+- `node packages/core/scripts/lineage-precheck.ts <base のディレクトリ> <next のディレクトリ> [--json] [--threshold 0.8]` で、実デプロイの 2 版の
+  関数の対応が exact / fuzzy / ambiguous / 不一致にどう分かれるか（source・sink を含む関数は別に）を出す。DB は使わない
+- 簡易版の norm_hash: 識別子は関数の中で現れた順の番号、プロパティ名・文字列・数値は残し、入れ子の関数の本体はプレースホルダ、
+  `!0`・`!1`・`void 0` は true・false・undefined にそろえる。anchors は文字列・プロパティ名・呼び出す API 名
+- 対応: norm_hash＋anchors が両方で一意なら exact、重なれば ambiguous、残りは MinHash で候補を絞ったトークンの shingle の Jaccard 係数が
+  閾値以上の組から 1:1 で fuzzy。sourcemap による対応と、外側の関数を手掛かりにした第 2 パスは index_functions（M3）で足す
+- 結果（実デプロイ 2 版の割合）は design.md §13 の決め直しの材料として記録する。fixture の例: webpack5-endpoints の 2 版で
+  exact 19 / fuzzy 2 / ambiguous 14（webpack の `()=>x` の getter）/ 不一致 1
+
 ### 5.3 Analysis（`analysis/`）
 
 ```ts
@@ -601,7 +611,7 @@ M2（第1段 E1。計画書 M2）の PR 単位:
 13. **PR-13a `diff_versions`・並び順・triage**: 版間差分（未収集による差を別枠）、決定的な並び順、`sa diff` / `sa triage-endpoint`。
     **PR-13b `export_endpoints`**: OpenAPI 3（servers に origin）/ GraphQL の operation 文書、スコープ外は既定で出さない。
 14. **PR-14 sa-mcp の最小版**: `extract_endpoints` / `diff_versions` / `find_missing_chunks` を読み取りとして公開。
-15. **PR-15 手順6の前提確認**: 実デプロイ 2 版で関数の exact / fuzzy / 不一致の割合を記録するスクリプト。
+15. **PR-15 手順6の前提確認**: 実デプロイ 2 版で関数の exact / fuzzy / 不一致の割合を記録するスクリプト（`packages/core/scripts/lineage-precheck.ts`）。
 
 並行して `@sa/eval` 側で M0（E1 採点基盤）を進められる（計画書 §3 の依存関係）。
 以降は計画書のマイルストーン（M2 以降）に従い、本文書の §5 のシグネチャを実装していく。

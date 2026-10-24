@@ -22,3 +22,6 @@ jsluice 抽出器のテストはこれを返す偽の実行ファイルで回す
 jsluice urls --include-source --placeholder EXPR "$PWD/output/main.c452f02c.js" \
   | sed "s#\"filename\":\"$PWD/output/#\"filename\":\"#" > jsluice-urls.jsonl
 ```
+
+`output-v2/` は手順6の前提確認（`scripts/lineage-precheck.ts`）のテスト用に、`build/src/api.js` を少し変えて作り直したもの
+（`login` の `X-Client-Version` を `3.2` に、`legacySearch` を削除、`exportAll` を追加）。`build/` には変更前のソースだけを置いている。

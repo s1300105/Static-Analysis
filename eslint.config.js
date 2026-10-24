@@ -15,6 +15,7 @@ export default tseslint.config(
       // テスト用のバンドラ出力（minify 済み）とその入力（ブラウザ向け）
       'packages/*/test/fixtures/*/build/**',
       'packages/*/test/fixtures/*/output/**',
+      'packages/*/test/fixtures/*/output-*/**',
       'packages/*/test/fixtures/*/other-build/**',
     ],
   },
