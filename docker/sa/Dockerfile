@@ -62,8 +62,9 @@ RUN --mount=type=secret,id=build_ca \
 FROM ${NODE_IMAGE} AS runtime
 ARG CODEQL_VERSION=2.27.3
 ARG JSLUICE_VERSION=v0.0.0-20240110145140-0ddfab153e06
-# Semgrep の venv は Debian の python3 を指す
-RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+# Semgrep の venv は Debian の python3 を指す。Semgrep のコア（OCaml）は通信しないときも起動時に CA の束を読むので
+# ca-certificates も入れる（コンテナはネットワークを持たないので、これで外へ出られるようにはならない）
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=codeql /opt/codeql /opt/codeql
 COPY --from=jsluice /out/jsluice /usr/local/bin/jsluice
 COPY --from=semgrep /opt/semgrep /opt/semgrep
